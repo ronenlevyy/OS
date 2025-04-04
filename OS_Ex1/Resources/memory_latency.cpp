@@ -2,6 +2,7 @@
 
 #include "memory_latency.h"
 #include "measure.h"
+#include <ctime>
 
 #define GALOIS_POLYNOMIAL ((1ULL << 63) | (1ULL << 62) | (1ULL << 60) | (1ULL << 59))
 
@@ -12,7 +13,7 @@
  */
 uint64_t nanosectime(struct timespec t)
 {
-	// Your code here
+	return (t.tv_sec * 1000000000ULL + t.tv_nsec);
 }
 
 /**
@@ -28,7 +29,27 @@ uint64_t nanosectime(struct timespec t)
 */
 struct measurement measure_sequential_latency(uint64_t repeat, array_element_t* arr, uint64_t arr_size, uint64_t zero)
 {
-    // Your code here
+    uint64_t baseline = 0;
+    uint64_t access = 0;
+    uint64_t rnd = 0;
+
+    for (uint64_t i = 0; i < repeat; i++) {
+        struct timespec baseline_start, baseline_end, access_start, access_end;
+        timespec_get(&baseline_start, TIME_UTC);
+
+        for (uint64_t j = 0; j < arr_size; j++) {
+        rnd = j + zero;
+        }
+        timespec_get(&baseline_end, TIME_UTC);
+        baseline += nanosectime(baseline_end) - nanosectime(baseline_start);
+
+        for (uint64_t j = 0; j < arr_size; j++) {
+            rnd = j + zero;
+        }
+        timespec_get(&baseline_end, TIME_UTC);
+        baseline += nanosectime(baseline_end) - nanosectime(baseline_start);
+    }
+
 }
 
 /**
