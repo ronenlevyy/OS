@@ -2,7 +2,6 @@
 
 #include "memory_latency.h"
 #include "measure.h"
-#include <ctime>
 
 #define GALOIS_POLYNOMIAL ((1ULL << 63) | (1ULL << 62) | (1ULL << 60) | (1ULL << 59))
 
@@ -27,29 +26,42 @@ uint64_t nanosectime(struct timespec t)
 *      double access_time - the average time (ns) taken to preform the measured operation with memory access.
 *      uint64_t rnd - the variable used to randomly access the array, returned to prevent compiler optimizations.
 */
-struct measurement measure_sequential_latency(uint64_t repeat, array_element_t* arr, uint64_t arr_size, uint64_t zero)
-{
-    uint64_t baseline = 0;
-    uint64_t access = 0;
-    uint64_t rnd = 0;
+struct measurement measure_sequential_latency(uint64_t repeat, array_element_t *arr, uint64_t arr_size, uint64_t zero) {
+    repeat = arr_size > repeat ? arr_size : repeat; // Make sure repeat >= arr_size
 
-    for (uint64_t i = 0; i < repeat; i++) {
-        struct timespec baseline_start, baseline_end, access_start, access_end;
-        timespec_get(&baseline_start, TIME_UTC);
-
-        for (uint64_t j = 0; j < arr_size; j++) {
-        rnd = j + zero;
-        }
-        timespec_get(&baseline_end, TIME_UTC);
-        baseline += nanosectime(baseline_end) - nanosectime(baseline_start);
-
-        for (uint64_t j = 0; j < arr_size; j++) {
-            rnd = j + zero;
-        }
-        timespec_get(&baseline_end, TIME_UTC);
-        baseline += nanosectime(baseline_end) - nanosectime(baseline_start);
+    // Baseline measurement:
+    struct timespec t0;
+    timespec_get(&t0, TIME_UTC);
+    register uint64_t rnd = 12345;
+    for (register uint64_t i = 0; i < repeat; i++) {
+        register uint64_t index = i % arr_size;
+        rnd ^= index & zero;
+        rnd = (rnd >> 1) ^ ((0 - (rnd & 1)) & GALOIS_POLYNOMIAL); // Advance rnd pseudo-randomly (using Galois LFSR)
     }
+    struct timespec t1;
+    timespec_get(&t1, TIME_UTC);
 
+    // Memory access measurement:
+    struct timespec t2;
+    timespec_get(&t2, TIME_UTC);
+    rnd = (rnd & zero) ^ 12345;
+    for (register uint64_t i = 0; i < repeat; i++) {
+        register uint64_t index = i % arr_size;
+        rnd ^= arr[index] & zero;
+        rnd = (rnd >> 1) ^ ((0 - (rnd & 1)) & GALOIS_POLYNOMIAL); // Advance rnd pseudo-randomly (using Galois LFSR)
+    }
+    struct timespec t3;
+    timespec_get(&t3, TIME_UTC);
+
+    // Calculate baseline and memory access times:
+    double baseline_per_cycle = (double) (nanosectime(t1) - nanosectime(t0)) / (repeat);
+    double memory_per_cycle = (double) (nanosectime(t3) - nanosectime(t2)) / (repeat);
+    struct measurement result;
+
+    result.baseline = baseline_per_cycle;
+    result.access_time = memory_per_cycle;
+    result.rnd = rnd;
+    return result;
 }
 
 /**
