@@ -30,8 +30,8 @@ uint64_t nanosectime(struct timespec t) {
 struct measurement measure_sequential_latency(uint64_t repeat, array_element_t *arr, uint64_t arr_size, uint64_t zero) {
     repeat = arr_size > repeat ? arr_size : repeat; // Make sure repeat >= arr_size
 
-    for (uint64_t i = 0; i < arr_size / sizeof(array_element_t); ++i) {
-        arr[i] = (array_element_t)(rand() % 1000);  // or any desired range
+    for (uint64_t i = 0; i < arr_size; ++i) {
+        arr[i] = i ^ 12345;
     }
 
     // Baseline measurement:
@@ -116,22 +116,22 @@ int main(int argc, char *argv[]) {
     int repeat = (int) repeat_l;
 
     for (uint64_t i = 100; i <= max_size; i *= factor) {
-        uint64_t arr_size = (uint64_t) ceil(i);
+        uint64_t mem_size = (uint64_t) ceil(i);
 
-        array_element_t *arr_random = (array_element_t *) malloc(arr_size);
-        array_element_t *arr_sequential = (array_element_t *) malloc(arr_size);
+        array_element_t *arr_random = (array_element_t *) malloc(mem_size);
+        array_element_t *arr_sequential = (array_element_t *) malloc(mem_size);
         if (!arr_random || !arr_sequential) {
             fprintf(stderr, "Failed allocating memory.\n");
             return -1;
         }
 
-        measurement random_latency = measure_latency(repeat, arr_random, arr_size, zero);
-        measurement sequential_latency = measure_sequential_latency(repeat, arr_sequential, arr_size, zero);
+        measurement sequential_latency = measure_sequential_latency(repeat, arr_sequential, mem_size/sizeof(array_element_t), zero);
+        measurement random_latency = measure_latency(repeat, arr_random, mem_size/sizeof(array_element_t), zero);
 
-        double random_offset = random_latency.access_time - random_latency.baseline;
         double sequential_offset = sequential_latency.access_time - sequential_latency.baseline;
-
-        printf("%llu,%f,%f\n", arr_size, random_offset, sequential_offset);
+        double random_offset = random_latency.access_time - random_latency.baseline;
+        // printf("Baseline: %f, accessTime: %f", sequential_latency.baseline, sequential_latency.access_time);
+        printf("%lu,%f,%f\n", mem_size, random_offset, sequential_offset);
 
         free(arr_sequential);
         free(arr_random);
