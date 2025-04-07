@@ -2,10 +2,17 @@
 
 #include "memory_latency.h"
 #include "measure.h"
-#include <cerrno>
 #include <cmath>
+#include <iostream>
+#include <string>
 
 #define GALOIS_POLYNOMIAL ((1ULL << 63) | (1ULL << 62) | (1ULL << 60) | (1ULL << 59))
+
+const std::string ARGUMENT_ERROR_MSG = "Invalid arguments. Usage: ./memory_latency <max_size> <factor> <repeat>\n";
+const std::string INVALID_MAX_SIZE_MSG = "Invalid max_size. Must be an integer ≥ 100.\n";
+const std::string INVALID_FACTOR_MSG = "Invalid factor. Must be a float > 1.\n";
+const std::string INVALID_REPEAT_MSG = "Invalid repeat. Must be a positive integer.\n";
+const std::string MEMORY_ERROR_MSG = "Memory allocation failed.\n";
 
 /**
  * Converts the struct timespec to time in nano-seconds.
@@ -37,11 +44,11 @@ struct measurement measure_sequential_latency(uint64_t repeat, array_element_t *
     // Baseline measurement:
     struct timespec t0;
     timespec_get(&t0, TIME_UTC);
-    register uint64_t rnd = 12345;
+    register uint64_t rnd = 0;
     for (register uint64_t i = 0; i < repeat; i++) {
-        register uint64_t index = i % arr_size;
+        register uint64_t index = rnd % arr_size;
         rnd ^= index & zero;
-        rnd = (rnd >> 1) ^ ((0 - (rnd & 1)) & GALOIS_POLYNOMIAL); // Advance rnd pseudo-randomly (using Galois LFSR)
+        rnd++;
     }
     struct timespec t1;
     timespec_get(&t1, TIME_UTC);
@@ -49,11 +56,11 @@ struct measurement measure_sequential_latency(uint64_t repeat, array_element_t *
     // Memory access measurement:
     struct timespec t2;
     timespec_get(&t2, TIME_UTC);
-    rnd = (rnd & zero) ^ 12345;
+    rnd = 0;
     for (register uint64_t i = 0; i < repeat; i++) {
-        register uint64_t index = i % arr_size;
+        register uint64_t index = rnd % arr_size;
         rnd ^= arr[index] & zero;
-        rnd = (rnd >> 1) ^ ((0 - (rnd & 1)) & GALOIS_POLYNOMIAL); // Advance rnd pseudo-randomly (using Galois LFSR)
+        rnd++; // Advance rnd sequentially.
     }
     struct timespec t3;
     timespec_get(&t3, TIME_UTC);
@@ -88,9 +95,8 @@ int main(int argc, char *argv[]) {
     struct timespec t_dummy;
     timespec_get(&t_dummy, TIME_UTC);
     const uint64_t zero = nanosectime(t_dummy) > 1000000000ull ? 0 : nanosectime(t_dummy);
-
-    if (argc < 4) {
-        fprintf(stderr, "Usage: %s './memory_latency max_size factor repeat'\n", argv[0]);
+    if (argc != 4) {
+        std::cerr << ARGUMENT_ERROR_MSG << std::endl;
         return -1;
     }
 
@@ -98,19 +104,19 @@ int main(int argc, char *argv[]) {
     errno = 0;
     uint64_t max_size = strtoull(argv[1], &endptr, 10);
     if (errno != 0 || *endptr != '\0' || max_size < 100) {
-        fprintf(stderr, "Invalid max_size. Must be an integer ≥ 100.\n");
+        std::cerr << INVALID_MAX_SIZE_MSG << std::endl;
         return -1;
     }
 
     float factor = strtof(argv[2], &endptr);
     if (errno != 0 || *endptr != '\0' || factor <= 1) {
-        fprintf(stderr, "Invalid factor. Must be a float > 1.\n");
+        std::cerr << INVALID_FACTOR_MSG << std::endl;
         return -1;
     }
 
     long repeat_l = strtol(argv[3], &endptr, 10);
     if (errno != 0 || *endptr != '\0' || repeat_l <= 0) {
-        fprintf(stderr, "Invalid repeat. Must be a positive integer.\n");
+        std::cerr << INVALID_REPEAT_MSG << std::endl;
         return -1;
     }
     int repeat = (int) repeat_l;
@@ -118,22 +124,18 @@ int main(int argc, char *argv[]) {
     for (uint64_t i = 100; i <= max_size; i *= factor) {
         uint64_t mem_size = (uint64_t) ceil(i);
 
-        array_element_t *arr_random = (array_element_t *) malloc(mem_size);
-        array_element_t *arr_sequential = (array_element_t *) malloc(mem_size);
-        if (!arr_random || !arr_sequential) {
-            fprintf(stderr, "Failed allocating memory.\n");
+        array_element_t *arr = (array_element_t *) malloc(mem_size);
+        if (!arr) {
+            std::cerr << MEMORY_ERROR_MSG << std::endl;
             return -1;
         }
 
-        measurement sequential_latency = measure_sequential_latency(repeat, arr_sequential, mem_size/sizeof(array_element_t), zero);
-        measurement random_latency = measure_latency(repeat, arr_random, mem_size/sizeof(array_element_t), zero);
+        measurement sequential_latency = measure_sequential_latency(repeat, arr, mem_size/sizeof(array_element_t), zero);
+        measurement random_latency = measure_latency(repeat, arr, mem_size/sizeof(array_element_t), zero);
 
         double sequential_offset = sequential_latency.access_time - sequential_latency.baseline;
         double random_offset = random_latency.access_time - random_latency.baseline;
-        // printf("Baseline: %f, accessTime: %f", sequential_latency.baseline, sequential_latency.access_time);
-        printf("%lu,%f,%f\n", mem_size, random_offset, sequential_offset);
-
-        free(arr_sequential);
-        free(arr_random);
+        printf("Array size: %llu, random access offset: %f, sequential access offset: %f\n", mem_size, random_offset, sequential_offset);
+        free(arr);
     }
 }
