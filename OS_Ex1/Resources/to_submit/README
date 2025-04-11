@@ -6,7 +6,7 @@ FILES:
 README -- A README file.
 memory_latency.cpp -- The source file for our implementation of the program described in Assignment 2.
 Makefile -- Our Makefile for Assignment 2
-resulted.png -- An image file with the graph of the results.
+results.png -- An image file with the graph of the results.
 lscpu.png --The screenshot of the output for the lscpu command.
 page_size.png -- A screenshot of the getconf PAGE_SIZE command
 
