@@ -37,14 +37,11 @@ uint64_t nanosectime(struct timespec t) {
 struct measurement measure_sequential_latency(uint64_t repeat, array_element_t *arr, uint64_t arr_size, uint64_t zero) {
     repeat = arr_size > repeat ? arr_size : repeat; // Make sure repeat >= arr_size
 
-    for (uint64_t i = 0; i < arr_size; ++i) {
-        arr[i] = i ^ 12345;
-    }
 
     // Baseline measurement:
     struct timespec t0;
     timespec_get(&t0, TIME_UTC);
-    register uint64_t rnd = 0;
+    register uint64_t rnd = 12345;
     for (register uint64_t i = 0; i < repeat; i++) {
         register uint64_t index = rnd % arr_size;
         rnd ^= index & zero;
@@ -56,7 +53,7 @@ struct measurement measure_sequential_latency(uint64_t repeat, array_element_t *
     // Memory access measurement:
     struct timespec t2;
     timespec_get(&t2, TIME_UTC);
-    rnd = 0;
+    rnd = (rnd & zero) ^ 12345;
     for (register uint64_t i = 0; i < repeat; i++) {
         register uint64_t index = rnd % arr_size;
         rnd ^= arr[index] & zero;
@@ -121,8 +118,7 @@ int main(int argc, char *argv[]) {
     }
     int repeat = (int) repeat_l;
 
-    for (uint64_t i = 100; i <= max_size; i *= factor) {
-        uint64_t mem_size = (uint64_t) ceil(i);
+    for (uint64_t mem_size = 100; mem_size <= max_size; mem_size =std::ceil(mem_size*factor)) {
 
         array_element_t *arr = (array_element_t *) malloc(mem_size);
         if (!arr) {
@@ -130,12 +126,21 @@ int main(int argc, char *argv[]) {
             return -1;
         }
 
+        uint64_t arr_size = mem_size/sizeof(array_element_t);
+        for(uint64_t i=0;i<arr_size;i++){
+            arr[i]=(array_element_t)i;
+        }
+
+
+
         measurement sequential_latency = measure_sequential_latency(repeat, arr, mem_size/sizeof(array_element_t), zero);
         measurement random_latency = measure_latency(repeat, arr, mem_size/sizeof(array_element_t), zero);
 
         double sequential_offset = sequential_latency.access_time - sequential_latency.baseline;
         double random_offset = random_latency.access_time - random_latency.baseline;
-        printf("Array size: %llu, random access offset: %f, sequential access offset: %f\n", mem_size, random_offset, sequential_offset);
+        std::cout << mem_size << ","
+                  << random_offset << ","
+                  << sequential_offset << std::endl;
         free(arr);
     }
 }
