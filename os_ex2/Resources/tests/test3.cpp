@@ -1,4 +1,4 @@
-#include "uthreads.h"
+#include "../uthreads.h"
 #include "stdio.h"
 #include <signal.h>
 #include <unistd.h>

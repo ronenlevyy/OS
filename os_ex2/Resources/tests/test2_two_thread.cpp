@@ -27,7 +27,7 @@
 #include <unistd.h>
 #include <map>
 #include <list>
-#include "uthreads.h"
+#include "../uthreads.h"
 
 int quantumR = 1000;
 int currId = -1;
