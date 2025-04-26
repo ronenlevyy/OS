@@ -1,14 +1,13 @@
 //
 // Created by RONEN LEVY on 23/04/2025.
 //
+#include <iostream>
+#include <csetjmp>
+
 #include "uthreads.h"
-#include <stdio.h>
-#include <setjmp.h>
-#include <signal.h>
+#include <csignal>
 #include <unistd.h>
 #include <sys/time.h>
-#include <stdbool.h>
-
 
 
 #ifdef __x86_64__
@@ -40,46 +39,156 @@ typedef unsigned int address_t;
 
 /* A translation is required when using an address of a variable.
    Use this as a black box in your code. */
-address_t translate_address(address_t addr)
-{
-  address_t ret;
-  asm volatile("xor    %%gs:0x18,%0\n"
-               "rol    $0x9,%0\n"
-      : "=g" (ret)
-      : "0" (addr));
-  return ret;
+address_t translate_address(address_t addr) {
+    address_t ret;
+    asm volatile("xor    %%gs:0x18,%0\n"
+        "rol    $0x9,%0\n"
+        : "=g" (ret)
+        : "0" (addr));
+    return ret;
 }
 
 
 #endif
 
+// Constants
 #define SECOND 1000000
 #define STACK_SIZE 4096
+#define SYSTEM_ERROR_MSG_PREFIX "system error: %s\n"
+#define THREAD_ERROR_MSG_PREFIX "thread library error: %s\n"
+#define NON_POSITIVE_QUANTUM_MSG "quantum_usecs must be positive"
+#define BAD_ALLOCATION_MSG "couldn't allocate memory\n"
+#define ERROR_CODE (-1)
+#define SUCCESS_CODE (0)
+#define SIGNAL_SET_CONFIG_ERROR_MSG "failed to configure signal set\n"
+#define SIGNAL_MASK_CONFIG_ERROR_MSG "failed to configure signal mask\n"
+#define SIGACTION_FAILURE_MSG "sigaction failed\n
 
+enum thread_states { READY, RUNNING, BLOCKED };
 
-enum thread_states {READY, RUNNING, BLOCKED};
-
-// Global Vars
-vector<TCB*> threads_vec(MAX_THREAD_NUM, nullptr);  //
-queue<int> ready_threads_queue;
-struct itimerval timer;
-struct sigaction sa;
-
-
-struct TCB{
-    size_t thread_id;
-    thread_states thread_state;
-    size_t quantum_count;
+struct TCB {
+    size_t id;
+    thread_states status;
+    size_t quantums;
     sigjmp_buf env;
-    char *thread_stack;
+    char *stack;
 
-    TCB(int id) : thread_id(id), thread_state(READY),
-                  quantum_count(0), thread_stack(nullptr) {
-//    todo - this is for d_bug
-      std::cout<< "new thread was made with id=" << this->thread_id<< std::endl
+    TCB(int id) : id(id), status(READY),
+                  quantums(0), stack(nullptr) {
+        //    todo - this is for d_bug
+        std::cout << "new thread was made with id=" << this->id << std::endl;
     }
 
+    void run_thread() {
+        quantums++;
+        status = RUNNING;
+    }
 };
+
+struct SleepingThread {
+    int tid;
+    size_t sleep_quantums;
+};
+
+// Global Vars
+std::vector<TCB *> threads_vec(MAX_THREAD_NUM, nullptr);
+std::vector<SleepingThread> sleeping_threads;
+std::queue<int> ready_threads_queue;
+itimerval timer;
+struct sigaction sa;
+size_t total_quantums = 1; // Total quantums across threads
+sigset_t signals_set;
+int current_running_tid;
+
+int get_and_update_next_tid_to_run() {
+    current_running_tid = ready_threads_queue.front();
+    ready_threads_queue.pop();
+    return current_running_tid;
+}
+
+void block_signals() {
+    if (sigprocmask(SIG_BLOCK, &signals_set, nullptr) < 0) {
+        fprintf(stderr, SYSTEM_ERROR_MSG_PREFIX, "sigprocmask failed");
+        exit(1);
+    }
+}
+
+void wake_sleeping_threads() {
+    std::vector<SleepingThread> still_sleeping;
+
+    for (auto &thread: sleeping_threads) {
+        int tid = thread.tid;
+        thread.sleep_quantums--;
+        if (thread.sleep_quantums <= 0) {
+            if (threads_vec[tid]->status != BLOCKED) {
+                threads_vec[tid]->status = READY;
+                ready_threads_queue.push(tid);
+            }
+        } else {
+            still_sleeping.push_back(thread);
+        }
+    }
+    sleeping_threads = std::move(still_sleeping);
+}
+
+void round_robin() {
+    block_signals();
+    wake_sleeping_threads();
+
+    if (ready_threads_queue.empty()) {
+        threads_vec[current_running_tid]->run_thread();
+    } else {
+        TCB *current_thread = threads_vec[get_and_update_next_tid_to_run()];
+        current_thread->run_thread();
+        siglongjmp(current_thread->env, 1);
+    }
+}
+
+void timer_handler(int signal) {
+    //maybe rename
+    round_robin();
+}
+
+void free_and_exit(int exit_code) {
+    for (const auto t: threads_vec) {
+        if (t != nullptr) {
+            delete [] t->stack;
+            delete t;
+        }
+    }
+    exit(exit_code);
+}
+
+void configure_timer(int quantum_usecs) {
+    timer.it_value.tv_sec = quantum_usecs / 1000000;
+    timer.it_value.tv_usec = quantum_usecs % 1000000;
+    timer.it_interval = timer.it_value;
+    if (setitimer(ITIMER_VIRTUAL, &timer, nullptr) == -1) {
+        std::cerr << "system error: setitimer failed\n";
+        exit(1);
+    }
+}
+
+void signal_handler_init() {
+    if (sigemptyset(&signals_set) == -1 ||
+        sigaddset(&signals_set, SIGVTALRM) == -1) {
+        fprintf(stderr, SYSTEM_ERROR_MSG_PREFIX, SIGNAL_SET_CONFIG_ERROR_MSG);
+        free_and_exit(ERROR_CODE);
+    }
+
+    sa.sa_handler = &timer_handler; // timer_handler will be called when SIGVTALARAM is raised
+
+    // if (sigemptyset(&sa.sa_mask) < 0 || sigaddset(&sa.sa_mask, SIGVTALRM) < 0) {
+    //     fprintf(stderr, SYSTEM_ERROR_MSG_PREFIX, SIGNAL_MASK_CONFIG_ERROR_MSG);
+    //     free_and_exit(ERROR_CODE);
+    // }
+
+    if (sigaction(SIGVTALRM, &sa, nullptr) < 0) {
+        fprintf(stderr, SYSTEM_ERROR_MSG_PREFIX, SIGACTION_FAILURE_MSG);
+        free_and_exit(ERROR_CODE);
+    }
+}
+
 /**
  * @brief initializes the thread library.
  *
@@ -92,7 +201,27 @@ struct TCB{
  *
  * @return On success, return 0. On failure, return -1.
 */
-int uthread_init(int quantum_usecs);
+int uthread_init(int quantum_usecs) {
+    if (quantum_usecs <= 0) {
+        fprintf(stderr, THREAD_ERROR_MSG_PREFIX, NON_POSITIVE_QUANTUM_MSG);
+        return ERROR_CODE;
+    }
+    signal_handler_init();
+    configure_timer(quantum_usecs);
+
+    try {
+        threads_vec[0] = new TCB(0);
+    } catch (std::bad_alloc &exc) {
+        fprintf(stderr, THREAD_ERROR_MSG_PREFIX, BAD_ALLOCATION_MSG);
+        free_and_exit(1);
+    }
+    threads_vec[0]->run_thread();
+    current_running_tid = 0;
+    if (sigsetjmp(threads_vec[0]->env, 1) != 0) {
+        return SUCCESS_CODE;
+    }
+    return SUCCESS_CODE;
+}
 
 /**
  * @brief Creates a new thread, whose entry point is the function entry_point with the signature
