@@ -39,12 +39,13 @@ typedef unsigned int address_t;
 
 /* A translation is required when using an address of a variable.
    Use this as a black box in your code. */
-address_t translate_address(address_t addr) {
+address_t translate_address(address_t addr)
+{
     address_t ret;
     asm volatile("xor    %%gs:0x18,%0\n"
-        "rol    $0x9,%0\n"
-        : "=g" (ret)
-        : "0" (addr));
+                 "rol    $0x9,%0\n"
+    : "=g" (ret)
+    : "0" (addr));
     return ret;
 }
 
@@ -62,19 +63,18 @@ address_t translate_address(address_t addr) {
 #define SUCCESS_CODE (0)
 #define SIGNAL_SET_CONFIG_ERROR_MSG "failed to configure signal set\n"
 #define SIGNAL_MASK_CONFIG_ERROR_MSG "failed to configure signal mask\n"
-#define SIGACTION_FAILURE_MSG "sigaction failed\n
+#define SIGACTION_FAILURE_MSG "sigaction failed\n"
 
 enum thread_states { READY, RUNNING, BLOCKED };
 
 struct TCB {
     size_t id;
     thread_states status;
-    size_t quantums;
     sigjmp_buf env;
     char *stack;
+    int quantums;
 
-    TCB(int id) : id(id), status(READY),
-                  quantums(0), stack(nullptr) {
+    explicit TCB(int id) : id(id), status(READY), stack(nullptr), quantums(0) {
         //    todo - this is for d_bug
         std::cout << "new thread was made with id=" << this->id << std::endl;
     }
@@ -96,7 +96,7 @@ std::vector<SleepingThread> sleeping_threads;
 std::queue<int> ready_threads_queue;
 itimerval timer;
 struct sigaction sa;
-size_t total_quantums = 1; // Total quantums across threads
+int total_quantums = 1; // Total quantums across threads
 sigset_t signals_set;
 int current_running_tid;
 
@@ -170,8 +170,7 @@ void configure_timer(int quantum_usecs) {
 }
 
 void signal_handler_init() {
-    if (sigemptyset(&signals_set) == -1 ||
-        sigaddset(&signals_set, SIGVTALRM) == -1) {
+    if (sigemptyset(&signals_set) == -1 || sigaddset(&signals_set, SIGVTALRM) == -1) {
         fprintf(stderr, SYSTEM_ERROR_MSG_PREFIX, SIGNAL_SET_CONFIG_ERROR_MSG);
         free_and_exit(ERROR_CODE);
     }
@@ -211,7 +210,7 @@ int uthread_init(int quantum_usecs) {
 
     try {
         threads_vec[0] = new TCB(0);
-    } catch (std::bad_alloc &exc) {
+    } catch (std::bad_alloc &_) {
         fprintf(stderr, THREAD_ERROR_MSG_PREFIX, BAD_ALLOCATION_MSG);
         free_and_exit(1);
     }
@@ -295,7 +294,9 @@ int uthread_sleep(int num_quantums);
  *
  * @return The ID of the calling thread.
 */
-int uthread_get_tid();
+int uthread_get_tid() {
+    return current_running_tid;
+}
 
 
 /**
@@ -306,7 +307,9 @@ int uthread_get_tid();
  *
  * @return The total number of quantums.
 */
-int uthread_get_total_quantums();
+int uthread_get_total_quantums() {
+    return total_quantums;
+}
 
 
 /**
@@ -318,4 +321,6 @@ int uthread_get_total_quantums();
  *
  * @return On success, return the number of quantums of the thread with ID tid. On failure, return -1.
 */
-int uthread_get_quantums(int tid);
+int uthread_get_quantums(int tid) {
+    return threads_vec[tid]->quantums;
+}
