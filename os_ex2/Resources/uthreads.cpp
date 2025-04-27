@@ -39,13 +39,12 @@ typedef unsigned int address_t;
 
 /* A translation is required when using an address of a variable.
    Use this as a black box in your code. */
-address_t translate_address(address_t addr)
-{
+address_t translate_address(address_t addr) {
     address_t ret;
     asm volatile("xor    %%gs:0x18,%0\n"
-                 "rol    $0x9,%0\n"
-    : "=g" (ret)
-    : "0" (addr));
+        "rol    $0x9,%0\n"
+        : "=g" (ret)
+        : "0" (addr));
     return ret;
 }
 
@@ -64,6 +63,8 @@ address_t translate_address(address_t addr)
 #define SIGNAL_SET_CONFIG_ERROR_MSG "failed to configure signal set\n"
 #define SIGNAL_MASK_CONFIG_ERROR_MSG "failed to configure signal mask\n"
 #define SIGACTION_FAILURE_MSG "sigaction failed\n"
+#define ENTRY_POINT_ERROR_MSG "entry_point is null\n"
+#define OVERFLOW_THREADS_ERROR_MSG "max number of threads reached\n"
 
 enum thread_states { READY, RUNNING, BLOCKED };
 
@@ -106,14 +107,6 @@ int total_quantums = 1; // Total quantums across threads
 sigset_t signals_set;
 int current_running_tid;
 
-/**
- * @brief Returns the thread ID of the thread that is about to run.
- */
-int get_and_update_next_tid_to_run() {
-    current_running_tid = ready_threads_queue.front();
-    ready_threads_queue.pop();
-    return current_running_tid;
-}
 
 /**
  * @brief Unblocks signals specified in the set using sigprocmask.
@@ -156,7 +149,9 @@ void round_robin() {
     if (ready_threads_queue.empty()) {
         threads_vec[current_running_tid]->run_thread();
     } else {
-        TCB *current_thread = threads_vec[get_and_update_next_tid_to_run()];
+        current_running_tid = ready_threads_queue.front();
+        ready_threads_queue.pop();
+        TCB *current_thread = threads_vec[current_running_tid];
         current_thread->run_thread();
         siglongjmp(current_thread->env, 1);
     }
@@ -221,6 +216,37 @@ void setup_SIGVTALRM_handler() {
     }
 }
 
+TCB *allocate_new_tcb(int tid) {
+    try {
+        threads_vec[tid] = new TCB(tid);
+        return threads_vec[tid];
+    } catch (std::bad_alloc &_) {
+        fprintf(stderr, THREAD_ERROR_MSG_PREFIX, BAD_ALLOCATION_MSG);
+        free();
+        exit(ERROR_CODE);
+    }
+}
+
+void allocate_new_stack(TCB *thread) {
+    try {
+        thread->stack = new char[STACK_SIZE];
+    }
+    catch (std::bad_alloc &_) {
+        fprintf(stderr, THREAD_ERROR_MSG_PREFIX, BAD_ALLOCATION_MSG);
+        free();
+        exit(ERROR_CODE);
+    }
+}
+
+int find_lowest_tid() {
+    for (int i = 0; i < MAX_THREAD_NUM; ++i) {
+        if (threads_vec[i] == nullptr) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 /**
  * @brief initializes the thread library.
  *
@@ -240,18 +266,21 @@ int uthread_init(int quantum_usecs) {
     }
     setup_SIGVTALRM_handler();
     configure_timer(quantum_usecs);
+    allocate_new_tcb(0);
 
-    try {
-        threads_vec[0] = new TCB(0);
-    } catch (std::bad_alloc &_) {
-        fprintf(stderr, THREAD_ERROR_MSG_PREFIX, BAD_ALLOCATION_MSG);
-        free();
-        exit(ERROR_CODE);
-    }
     current_running_tid = 0;
     sigsetjmp(threads_vec[0]->env, 1);
     threads_vec[0]->run_thread();
     return SUCCESS_CODE;
+}
+
+void init_thread_context(TCB* thread, thread_entry_point entry_point) {
+    address_t sp = (address_t) thread->stack + STACK_SIZE - sizeof(address_t);
+    address_t pc = (address_t) entry_point;
+    sigsetjmp((thread->env), 1);
+    (thread->env)->__jmpbuf[JB_SP] = translate_address(sp);
+    (thread->env)->__jmpbuf[JB_PC] = translate_address(pc);
+    sigemptyset(&(thread->env)->__saved_mask);
 }
 
 /**
@@ -266,7 +295,26 @@ int uthread_init(int quantum_usecs) {
  *
  * @return On success, return the ID of the created thread. On failure, return -1.
 */
-int uthread_spawn(thread_entry_point entry_point);
+int uthread_spawn(thread_entry_point entry_point) {
+    if (entry_point == nullptr) {
+        fprintf(stderr, THREAD_ERROR_MSG_PREFIX, ENTRY_POINT_ERROR_MSG);
+        return ERROR_CODE;
+    }
+
+    block_signals();
+    int tid = find_lowest_tid();
+    if (tid == -1) {
+        fprintf(stderr, THREAD_ERROR_MSG_PREFIX, OVERFLOW_THREADS_ERROR_MSG);
+        block_signals();
+        return ERROR_CODE;
+    }
+    TCB *new_thread = allocate_new_tcb(tid);
+    allocate_new_stack(new_thread);
+
+    init_thread_context(new_thread, entry_point);
+    ready_threads_queue.push(tid);
+    return tid;
+}
 
 
 /**
