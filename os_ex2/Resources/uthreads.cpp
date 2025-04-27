@@ -61,7 +61,7 @@ enum thread_states {READY, RUNNING, BLOCKED};
 
 // Global Vars
 vector<TCB*> threads_vec(MAX_THREAD_NUM, nullptr);  //
-queue<int> ready_threads_queue;
+queue<size_t> ready_threads_queue;
 struct itimerval timer;
 struct sigaction sa;
 
