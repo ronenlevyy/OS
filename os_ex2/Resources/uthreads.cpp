@@ -67,6 +67,10 @@ address_t translate_address(address_t addr)
 
 enum thread_states { READY, RUNNING, BLOCKED };
 
+/*
+ * Thread Control Block (TCB) structure
+ * Holds information about each thread, including its ID, status, environment, stack, and quantum count.
+ */
 struct TCB {
     size_t id;
     thread_states status;
@@ -79,12 +83,14 @@ struct TCB {
         std::cout << "new thread was made with id=" << this->id << std::endl;
     }
 
+    // runs a thread
     void run_thread() {
         quantums++;
         status = RUNNING;
     }
 };
 
+// Struct to hold sleeping threads
 struct SleepingThread {
     int tid;
     size_t sleep_quantums;
@@ -100,12 +106,18 @@ int total_quantums = 1; // Total quantums across threads
 sigset_t signals_set;
 int current_running_tid;
 
+/**
+ * @brief Returns the thread ID of the thread that is about to run.
+ */
 int get_and_update_next_tid_to_run() {
     current_running_tid = ready_threads_queue.front();
     ready_threads_queue.pop();
     return current_running_tid;
 }
 
+/**
+ * @brief Unblocks signals specified in the set using sigprocmask.
+ */
 void block_signals() {
     if (sigprocmask(SIG_BLOCK, &signals_set, nullptr) < 0) {
         fprintf(stderr, SYSTEM_ERROR_MSG_PREFIX, "sigprocmask failed");
@@ -113,6 +125,9 @@ void block_signals() {
     }
 }
 
+/**
+ * @brief wakes up sleeping threads that have exceeded their quantum limit.
+ */
 void wake_sleeping_threads() {
     std::vector<SleepingThread> still_sleeping;
 
@@ -131,6 +146,9 @@ void wake_sleeping_threads() {
     sleeping_threads = std::move(still_sleeping);
 }
 
+/**
+ * @brief Use Round Robin scheduling to switch between threads.
+ */
 void round_robin() {
     block_signals();
     wake_sleeping_threads();
@@ -144,47 +162,62 @@ void round_robin() {
     }
 }
 
+/**
+ * @brief The signal handler for SIGVTALRM.
+ * @param signal required by sa.sa_handler
+ */
 void timer_handler(int signal) {
     //maybe rename
     round_robin();
 }
 
-void free_and_exit(int exit_code) {
+/**
+ * @brief Frees all allocated resources.
+ */
+void free() {
     for (const auto t: threads_vec) {
         if (t != nullptr) {
             delete [] t->stack;
             delete t;
         }
     }
-    exit(exit_code);
 }
 
+/**
+ * @brief Configures the timer for the specified quantum in microseconds.
+ *
+ * @param quantum_usecs The quantum time in microseconds.
+ */
 void configure_timer(int quantum_usecs) {
     timer.it_value.tv_sec = quantum_usecs / 1000000;
     timer.it_value.tv_usec = quantum_usecs % 1000000;
     timer.it_interval = timer.it_value;
     if (setitimer(ITIMER_VIRTUAL, &timer, nullptr) == -1) {
         std::cerr << "system error: setitimer failed\n";
-        exit(1);
+        exit(ERROR_CODE);
     }
 }
 
-void signal_handler_init() {
+/**
+ * @brief Sets up the SIGVTALRM signal handler.
+ *
+ * This function creates a signal set with SIGVTALRM and sets up the signal handler to call timer_handler
+ * when SIGVTALRM is raised.
+ */
+void setup_SIGVTALRM_handler() {
+    // create signal set with SIGVTALRM in it
     if (sigemptyset(&signals_set) == -1 || sigaddset(&signals_set, SIGVTALRM) == -1) {
         fprintf(stderr, SYSTEM_ERROR_MSG_PREFIX, SIGNAL_SET_CONFIG_ERROR_MSG);
-        free_and_exit(ERROR_CODE);
+        free();
+        exit(ERROR_CODE);
     }
 
     sa.sa_handler = &timer_handler; // timer_handler will be called when SIGVTALARAM is raised
 
-    // if (sigemptyset(&sa.sa_mask) < 0 || sigaddset(&sa.sa_mask, SIGVTALRM) < 0) {
-    //     fprintf(stderr, SYSTEM_ERROR_MSG_PREFIX, SIGNAL_MASK_CONFIG_ERROR_MSG);
-    //     free_and_exit(ERROR_CODE);
-    // }
-
     if (sigaction(SIGVTALRM, &sa, nullptr) < 0) {
         fprintf(stderr, SYSTEM_ERROR_MSG_PREFIX, SIGACTION_FAILURE_MSG);
-        free_and_exit(ERROR_CODE);
+        free();
+        exit(ERROR_CODE);
     }
 }
 
@@ -205,20 +238,19 @@ int uthread_init(int quantum_usecs) {
         fprintf(stderr, THREAD_ERROR_MSG_PREFIX, NON_POSITIVE_QUANTUM_MSG);
         return ERROR_CODE;
     }
-    signal_handler_init();
+    setup_SIGVTALRM_handler();
     configure_timer(quantum_usecs);
 
     try {
         threads_vec[0] = new TCB(0);
     } catch (std::bad_alloc &_) {
         fprintf(stderr, THREAD_ERROR_MSG_PREFIX, BAD_ALLOCATION_MSG);
-        free_and_exit(1);
+        free();
+        exit(ERROR_CODE);
     }
-    threads_vec[0]->run_thread();
     current_running_tid = 0;
-    if (sigsetjmp(threads_vec[0]->env, 1) != 0) {
-        return SUCCESS_CODE;
-    }
+    sigsetjmp(threads_vec[0]->env, 1);
+    threads_vec[0]->run_thread();
     return SUCCESS_CODE;
 }
 
