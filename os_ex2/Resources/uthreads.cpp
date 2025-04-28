@@ -1,13 +1,18 @@
 //
 // Created by RONEN LEVY on 23/04/2025.
 //
-#include <iostream>
 #include <csetjmp>
-
 #include "uthreads.h"
-#include <csignal>
-#include <unistd.h>
+#include <queue>
+#include <cstdio>
+#include <vector>
 #include <sys/time.h>
+#include <signal.h>
+#include <cstdlib>
+#include <unordered_map>
+#include <iostream>
+#include <unistd.h>
+#include <algorithm>
 
 
 #ifdef __x86_64__
@@ -110,11 +115,11 @@ struct SleepingThread {
 std::vector<TCB *> threads_vec(MAX_THREAD_NUM, nullptr);
 std::vector<SleepingThread> sleeping_threads_vec;
 std::queue<int> ready_threads_queue;
-itimerval timer;
+struct itimerval timer;
 struct sigaction sa;
 int total_quantums = 1; // Total quantums across threads
 sigset_t signals_set;
-int current_running_tid;
+size_t current_running_tid;
 
 
 /**
@@ -163,8 +168,8 @@ void wake_sleeping_threads() {
  * @param quantum_usecs The quantum time in microseconds.
  */
 void configure_timer(int quantum_usecs) {
-    timer.it_value.tv_sec = quantum_usecs / 1000000;
-    timer.it_value.tv_usec = quantum_usecs % 1000000;
+    timer.it_value.tv_sec = quantum_usecs / SECOND;
+    timer.it_value.tv_usec = quantum_usecs % SECOND;
     timer.it_interval = timer.it_value;
 }
 
@@ -257,7 +262,7 @@ void setup_SIGVTALRM_handler() {
     }
 }
 
-TCB *allocate_new_tcb(int tid) {
+TCB *allocate_new_tcb(size_t tid) {
     try {
         threads_vec[tid] = new TCB(tid);
         return threads_vec[tid];
@@ -277,6 +282,7 @@ void allocate_new_stack(TCB *thread) {
         exit(ERROR_CODE);
     }
 }
+
 
 int find_lowest_tid() {
     for (int i = 0; i < MAX_THREAD_NUM; ++i) {
@@ -306,12 +312,14 @@ int uthread_init(int quantum_usecs) {
     }
     configure_timer(quantum_usecs);
     setup_SIGVTALRM_handler();
-    allocate_new_tcb(0);
 
     current_running_tid = 0;
-    if (sigsetjmp(threads_vec[0]->env, 1) == 0) {
-        threads_vec[0]->run_thread();
-    }
+    allocate_new_tcb(current_running_tid);
+
+    sigsetjmp(threads_vec[0]->env, 1);
+    sigemptyset (&(threads_vec[0]->env->__saved_mask));
+    threads_vec[0]->run_thread();
+
     return SUCCESS_CODE;
 }
 
@@ -566,13 +574,13 @@ int uthread_get_total_quantums() {
  * @return On success, return the number of quantums of the thread with ID tid. On failure, return -1.
 */
 int uthread_get_quantums(int tid) {
-    block_signals();
+//    block_signals();
     if (tid < 0 || tid >= MAX_THREAD_NUM || threads_vec[tid] == nullptr) {
         fprintf(stderr, THREAD_ERROR_MSG_PREFIX, INVALID_TID_MSG);
-        unblock_signals();
+//        unblock_signals();
         return ERROR_CODE;
     }
     int quantums = threads_vec[tid]->quantums;
-    unblock_signals();
+//    unblock_signals();
     return quantums;
 }
