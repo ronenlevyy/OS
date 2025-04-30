@@ -89,10 +89,7 @@ struct TCB {
     int quantums;
     bool is_sleeping; //TODO: delete later
 
-    explicit TCB(int id) : id(id), status(READY), stack(nullptr), quantums(0) {
-        //    todo - this is for d_bug
-        std::cout << "new thread was made with id=" << this->id << std::endl;
-    }
+    explicit TCB(int id) : id(id), status(READY), stack(nullptr), quantums(0) {}
 
     // runs a thread
     void run_thread() {
@@ -170,42 +167,85 @@ void wake_sleeping_threads() {
 void configure_timer(int quantum_usecs) {
     timer.it_value.tv_sec = quantum_usecs / SECOND;
     timer.it_value.tv_usec = quantum_usecs % SECOND;
-    timer.it_interval = timer.it_value;
+    timer.it_interval.tv_sec = quantum_usecs / SECOND;
+    timer.it_interval.tv_usec = quantum_usecs % SECOND;
 }
 
 /**
  * @brief Use Round Robin scheduling to switch between threads.
  */
+//void round_robin() {
+//    block_signals();
+//    total_quantums++;
+//
+//    if (ready_threads_queue.empty()) {
+//        threads_vec[current_running_tid]->run_thread();
+//        setitimer(ITIMER_VIRTUAL, &timer, nullptr);
+//    } else {
+//        int next_tid = ready_threads_queue.front();
+//        ready_threads_queue.pop();
+//
+//        // Ensure next thread exists (could have been terminated)
+//        if (threads_vec[next_tid] == nullptr) {
+//            unblock_signals();
+//            round_robin();
+//            return;
+//        }
+//
+//        current_running_tid = next_tid;
+//        TCB *current_thread = threads_vec[current_running_tid];
+//        current_thread->run_thread();
+//        setitimer(ITIMER_VIRTUAL, &timer, nullptr);
+//       unblock_signals();
+//        siglongjmp(current_thread->env, 1);
+//    }
+//    unblock_signals();
+//}
+
+
+
+//
+// todo- this is gpts round robin, still not working but better
 void round_robin() {
     block_signals();
-    total_quantums++;
 
-    if (setitimer(ITIMER_VIRTUAL, &timer, nullptr) == -1) {
-        std::cerr << "system error: setitimer failed\n";
-        exit(ERROR_CODE);
+    if (sigsetjmp(threads_vec[current_running_tid]->env, 1) == 1) {
+        threads_vec[current_running_tid]->run_thread(); // ✅ עדכון מצב ו־quantums
+        if (setitimer(ITIMER_VIRTUAL, &timer, nullptr) < 0) {
+            perror("setitimer");
+            exit(ERROR_CODE);
+        }
+        unblock_signals();
+        return;
     }
 
-    if (ready_threads_queue.empty()) {
-        threads_vec[current_running_tid]->run_thread();
-    } else {
+    if (!ready_threads_queue.empty()) {
+        threads_vec[current_running_tid]->status = READY;
+        ready_threads_queue.push(current_running_tid);
+
         int next_tid = ready_threads_queue.front();
         ready_threads_queue.pop();
 
-        // Ensure next thread exists (could have been terminated)
-        if (threads_vec[next_tid] == nullptr) {
-            unblock_signals();
-            round_robin();
-            return;
-        }
-
         current_running_tid = next_tid;
-        TCB *current_thread = threads_vec[current_running_tid];
-        current_thread->run_thread();
+        threads_vec[current_running_tid]->status = RUNNING;
+        total_quantums++;
+
         unblock_signals();
-        siglongjmp(current_thread->env, 1);
+
+        siglongjmp(threads_vec[current_running_tid]->env, 1);
+    } else {
+        threads_vec[current_running_tid]->run_thread();
+        total_quantums++;
+        if (setitimer(ITIMER_VIRTUAL, &timer, nullptr) < 0) {
+            perror("setitimer");
+            exit(ERROR_CODE);
+        }
+        unblock_signals();
     }
-    unblock_signals();
 }
+
+
+
 
 void move_current_running_thread_to_ready() {
     if (threads_vec[current_running_tid]->status == RUNNING) {
@@ -253,7 +293,10 @@ void setup_SIGVTALRM_handler() {
         exit(ERROR_CODE);
     }
 
-    sa.sa_handler = &timer_handler; // timer_handler will be called when SIGVTALARAM is raised
+    sa.sa_handler = &timer_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+
 
     if (sigaction(SIGVTALRM, &sa, nullptr) < 0) {
         fprintf(stderr, SYSTEM_ERROR_MSG_PREFIX, SIGACTION_FAILURE_MSG);
@@ -310,15 +353,23 @@ int uthread_init(int quantum_usecs) {
         fprintf(stderr, THREAD_ERROR_MSG_PREFIX, NON_POSITIVE_QUANTUM_MSG);
         return ERROR_CODE;
     }
-    configure_timer(quantum_usecs);
-    setup_SIGVTALRM_handler();
 
     current_running_tid = 0;
     allocate_new_tcb(current_running_tid);
 
+    threads_vec[0]->run_thread();
+
+
     sigsetjmp(threads_vec[0]->env, 1);
     sigemptyset (&(threads_vec[0]->env->__saved_mask));
-    threads_vec[0]->run_thread();
+    setup_SIGVTALRM_handler();
+    configure_timer(quantum_usecs);
+    if (setitimer(ITIMER_VIRTUAL, &timer, nullptr) < 0) {
+        fprintf (stderr, "thread library error: setitimer error\n");
+        return -1;
+    }
+
+
 
     return SUCCESS_CODE;
 }
