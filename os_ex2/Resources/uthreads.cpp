@@ -75,7 +75,7 @@ address_t translate_address(address_t addr) {
 #define QUANTUMS_ERROR_MSG "quantum_usecs must be non negative\n"
 #define MAIN_THREAD_ERROR_MSG "main thread can't be asleep\n"
 
-enum thread_states { READY, RUNNING, BLOCKED };
+enum thread_states { READY, RUNNING, BLOCKED, BLOCKED_AND_SLEEPING, SLEEPING };
 
 /*
  * Thread Control Block (TCB) structure
@@ -87,7 +87,7 @@ struct TCB {
     sigjmp_buf env;
     char *stack;
     int quantums;
-    bool is_sleeping; //TODO: delete later
+    bool is_sleeping = false;
 
     explicit TCB(int id) : id(id), status(READY), stack(nullptr), quantums(0) {}
 
@@ -142,29 +142,45 @@ void unblock_signals() {
 
 /**
  * @brief wakes up sleeping threads that have exceeded their quantum limit.
+ *//**
+ * @brief wakes up sleeping threads that have exceeded their quantum limit.
  */
 void wake_sleeping_threads() {
     std::vector<SleepingThread> still_sleeping;
 
+
     for (auto &thread : sleeping_threads_vec) {
         int tid = thread.tid;
-        if (total_quantums >= thread.sleep_quantums) {
-            if (threads_vec[tid] != nullptr) {
-                // סימון שהתהליך סיים את השינה
-                threads_vec[tid]->is_sleeping = false;
+        if (total_quantums >= thread.sleep_quantums && threads_vec[tid] != nullptr) {
+            threads_vec[tid]->is_sleeping = false;
 
-                // אם הוא לא חסום – נעביר אותו ל־READY
-                if (threads_vec[tid]->status != BLOCKED) {
-                    threads_vec[tid]->status = READY;
-                    ready_threads_queue.push(tid);
-                }
+            thread_states &status = threads_vec[tid]->status;
+
+
+            if (status == SLEEPING) {
+                status = READY;
+                ready_threads_queue.push(tid);
+            }
+            else if (status == BLOCKED_AND_SLEEPING) {
+                status = BLOCKED;
+            }
+
+           
+            if (status == BLOCKED) {
+                status = READY;
+                ready_threads_queue.push(tid);
             }
         } else {
             still_sleeping.push_back(thread);
         }
     }
+
     sleeping_threads_vec = std::move(still_sleeping);
+
 }
+
+
+
 
 
 
@@ -183,40 +199,6 @@ void configure_timer(int quantum_usecs) {
 /**
  * @brief Use Round Robin scheduling to switch between threads.
  */
-//void round_robin() {
-//
-//    if (threads_vec[current_running_tid] != nullptr) {
-//        if (sigsetjmp(threads_vec[current_running_tid]->env, 1) == 1) {
-//            return; // Return here when the thread is resumed
-//        }
-//    }
-//    block_signals();
-//    total_quantums++;
-//
-//    if (ready_threads_queue.empty()) {
-//        threads_vec[current_running_tid]->run_thread();
-//    }
-//    else
-//    {
-//        int next_tid = ready_threads_queue.front();
-//        ready_threads_queue.pop();
-//
-//        // Ensure next thread exists (could have been terminated)
-//        if (threads_vec[next_tid] == nullptr) {
-//            unblock_signals();
-//            round_robin();
-//            return;
-//        }
-//
-//        current_running_tid = next_tid;
-//        TCB *current_thread = threads_vec[current_running_tid];
-//        current_thread->run_thread();
-//        unblock_signals();
-//        siglongjmp(current_thread->env, 1);
-//    }
-//    unblock_signals();
-//}
-
 void round_robin() {
     if (threads_vec[current_running_tid] != nullptr) {
         if (sigsetjmp(threads_vec[current_running_tid]->env, 1) == 1) {
@@ -227,7 +209,7 @@ void round_robin() {
     block_signals();
     total_quantums++;
 
-    // חפש תהליך תקף ב־ready queue
+    // חפש thread חדש
     while (!ready_threads_queue.empty()) {
         int next_tid = ready_threads_queue.front();
         ready_threads_queue.pop();
@@ -237,12 +219,19 @@ void round_robin() {
             TCB *next_thread = threads_vec[next_tid];
             next_thread->run_thread();
             unblock_signals();
+            setitimer(ITIMER_VIRTUAL, &timer, nullptr);
             siglongjmp(next_thread->env, 1);
         }
     }
+
+    // אין thread אחר – המשך עם הנוכחי, אבל תוודא שהוא מקבל זמן תקין!
+    setitimer(ITIMER_VIRTUAL, &timer, nullptr);
     threads_vec[current_running_tid]->run_thread();
     unblock_signals();
+    siglongjmp(threads_vec[current_running_tid]->env, 1);
 }
+
+
 
 
 void move_current_running_thread_to_ready() {
@@ -521,7 +510,11 @@ int uthread_block(int tid) {
         remove_thread_from_ready_queue(tid);
     }
 
-    threads_vec[tid]->status = BLOCKED;
+    if (threads_vec[tid]->status == SLEEPING) {
+        threads_vec[tid]->status = BLOCKED_AND_SLEEPING;
+    } else {
+        threads_vec[tid]->status = BLOCKED;
+    }
 
 
     if (tid == current_running_tid) {
@@ -551,13 +544,25 @@ int uthread_resume(int tid) {
         unblock_signals();
         return ERROR_CODE;
     }
-    if (threads_vec[tid]->status != BLOCKED) {
+
+    if (threads_vec[tid]->status != BLOCKED && threads_vec[tid]->status != BLOCKED_AND_SLEEPING) {
         unblock_signals();
         return SUCCESS_CODE;
     }
 
-    threads_vec[tid]->status = READY;
-    ready_threads_queue.push(tid);
+    if (threads_vec[tid]->status == BLOCKED) {
+        threads_vec[tid]->status = READY;
+        ready_threads_queue.push(tid);
+    }
+    else if (threads_vec[tid]->status == BLOCKED_AND_SLEEPING) {
+        if (threads_vec[tid]->is_sleeping) {
+            threads_vec[tid]->status = SLEEPING;
+        } else {
+            threads_vec[tid]->status = READY;
+            ready_threads_queue.push(tid);
+        }
+    }
+
     unblock_signals();
     return SUCCESS_CODE;
 }
@@ -592,16 +597,17 @@ int uthread_sleep(int num_quantums) {
         unblock_signals();
         return SUCCESS_CODE;
     }
-    threads_vec[current_running_tid]->status = BLOCKED;
+    if (threads_vec[current_running_tid]->status == BLOCKED) {
+        threads_vec[current_running_tid]->status = BLOCKED_AND_SLEEPING;
+    } else {
+        threads_vec[current_running_tid]->status = SLEEPING;
+    }
     threads_vec[current_running_tid]->is_sleeping = true;
     sleeping_threads_vec.push_back(SleepingThread(current_running_tid, total_quantums + num_quantums));
     if (sigsetjmp(threads_vec[current_running_tid]->env, 1) == 0) {
         round_robin();
     }
-    else {
-        threads_vec[current_running_tid]->is_sleeping = false;
 
-    }
     unblock_signals();
     return SUCCESS_CODE;
 }
