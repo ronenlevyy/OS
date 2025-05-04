@@ -11,7 +11,6 @@
 #include <unistd.h>
 #include <algorithm>
 
-
 #ifdef __x86_64__
 /* code for 64 bit Intel arch */
 
@@ -25,9 +24,9 @@ address_t translate_address(address_t addr)
 {
     address_t ret;
     asm volatile("xor    %%fs:0x30,%0\n"
-        "rol    $0x11,%0\n"
-                 : "=g" (ret)
-                 : "0" (addr));
+                 "rol    $0x11,%0\n"
+                 : "=g"(ret)
+                 : "0"(addr));
     return ret;
 }
 
@@ -38,18 +37,17 @@ typedef unsigned int address_t;
 #define JB_SP 4
 #define JB_PC 5
 
-
 /* A translation is required when using an address of a variable.
    Use this as a black box in your code. */
-address_t translate_address(address_t addr) {
+address_t translate_address(address_t addr)
+{
     address_t ret;
     asm volatile("xor    %%gs:0x18,%0\n"
-        "rol    $0x9,%0\n"
-        : "=g" (ret)
-        : "0" (addr));
+                 "rol    $0x9,%0\n"
+                 : "=g"(ret)
+                 : "0"(addr));
     return ret;
 }
-
 
 #endif
 
@@ -72,13 +70,20 @@ address_t translate_address(address_t addr) {
 #define QUANTUMS_ERROR_MSG "quantum_usecs must be non negative\n"
 #define MAIN_THREAD_ERROR_MSG "main thread can't be asleep\n"
 
-enum thread_states { READY, RUNNING, BLOCKED, SLEEPING };
+enum thread_states
+{
+    READY,
+    RUNNING,
+    BLOCKED,
+    SLEEPING
+};
 
 /*
  * Thread Control Block (TCB) structure
  * Holds information about each thread, including its ID, status, environment, stack, and quantum count.
  */
-struct TCB {
+struct TCB
+{
     size_t id;
     thread_states status;
     sigjmp_buf env;
@@ -88,22 +93,25 @@ struct TCB {
     explicit TCB(int id) : id(id), status(READY), stack(nullptr), quantums(0) {}
 
     // runs a thread
-    void run_thread() {
+    void run_thread()
+    {
         quantums++;
         status = RUNNING;
     }
 };
 
 // Struct to hold sleeping threads
-struct SleepingThread {
+struct SleepingThread
+{
     size_t tid;
     size_t sleep_quantums;
-    SleepingThread(int id, int sleep_quantums) : tid(id), sleep_quantums(sleep_quantums) {
+    SleepingThread(int id, int sleep_quantums) : tid(id), sleep_quantums(sleep_quantums)
+    {
     }
 };
 
 // Global Vars
-std::vector<TCB*> threads_vec(MAX_THREAD_NUM, nullptr);
+std::vector<TCB *> threads_vec(MAX_THREAD_NUM, nullptr);
 std::vector<SleepingThread> sleeping_threads_vec;
 std::queue<int> ready_threads_queue;
 struct itimerval timer;
@@ -115,8 +123,10 @@ size_t current_running_tid;
 /**
  * @brief Unblocks signals specified in the set using sigprocmask.
  */
-void block_signals() {
-    if (sigprocmask(SIG_BLOCK, &signals_set, nullptr) < 0) {
+void block_signals()
+{
+    if (sigprocmask(SIG_BLOCK, &signals_set, nullptr) < 0)
+    {
         fprintf(stderr, SYSTEM_ERROR_MSG_PREFIX, SIGPROCMASK_FAILURE_MSG);
         exit(1);
     }
@@ -125,8 +135,10 @@ void block_signals() {
 /**
  * @brief Unblocks signals specified in the set using sigprocmask.
  */
-void unblock_signals() {
-    if (sigprocmask(SIG_UNBLOCK, &signals_set, nullptr) < 0) {
+void unblock_signals()
+{
+    if (sigprocmask(SIG_UNBLOCK, &signals_set, nullptr) < 0)
+    {
         fprintf(stderr, SYSTEM_ERROR_MSG_PREFIX, SIGPROCMASK_FAILURE_MSG);
         exit(1);
     }
@@ -135,34 +147,41 @@ void unblock_signals() {
 /**
  * @brief wakes up sleeping threads that have exceeded their quantum limit.
  */
-void wake_sleeping_threads() {
+void wake_sleeping_threads()
+{
     std::vector<SleepingThread> still_sleeping;
 
-    for (auto &thread : sleeping_threads_vec) {
+    for (auto &thread : sleeping_threads_vec)
+    {
         size_t tid = thread.tid;
-        if (threads_vec[tid] == nullptr) {
+        if (threads_vec[tid] == nullptr)
+        {
             // Thread has been terminated
             continue;
         }
-        if (total_quantums >= thread.sleep_quantums) {
-            if (threads_vec[tid]->status == SLEEPING) {
+        if (total_quantums >= thread.sleep_quantums)
+        {
+            if (threads_vec[tid]->status == SLEEPING)
+            {
                 threads_vec[tid]->status = READY;
                 ready_threads_queue.push(tid);
             }
-        } else {
+        }
+        else
+        {
             still_sleeping.push_back(thread);
         }
     }
     sleeping_threads_vec = std::move(still_sleeping);
 }
 
-
 /**
  * @brief Configures the timer for the specified quantum in microseconds.
  *
  * @param quantum_usecs The quantum time in microseconds.
  */
-void configure_timer(size_t quantum_usecs) {
+void configure_timer(size_t quantum_usecs)
+{
     timer.it_value.tv_sec = quantum_usecs / SECOND;
     timer.it_value.tv_usec = quantum_usecs % SECOND;
     timer.it_interval.tv_sec = quantum_usecs / SECOND;
@@ -172,18 +191,21 @@ void configure_timer(size_t quantum_usecs) {
 /**
  * @brief Use Round Robin scheduling to switch between threads.
  */
-void round_robin() {
-    if (threads_vec[current_running_tid] != nullptr) {
-        if (sigsetjmp(threads_vec[current_running_tid]->env, 1) == 1) {
-            return;
-        }
-    }
+void round_robin()
+{
     block_signals();
     total_quantums++;
-    while (!ready_threads_queue.empty()) {
+
+    if (ready_threads_queue.empty())
+    {
+        threads_vec[current_running_tid]->run_thread();
+    }
+    else
+    {
         size_t next_tid = ready_threads_queue.front();
         ready_threads_queue.pop();
 
+        // Ensure next thread exists (could have been terminated)
         if (threads_vec[next_tid] != nullptr) {
             current_running_tid = next_tid;
             TCB *next_thread = threads_vec[next_tid];
@@ -192,16 +214,16 @@ void round_robin() {
             siglongjmp(next_thread->env, 1);
         }
     }
-
-    threads_vec[current_running_tid]->run_thread();
     unblock_signals();
 }
 
 /**
  * @brief Moves the current running thread to the ready state if it is currently running.
  */
-void move_current_running_thread_to_ready() {
-    if (threads_vec[current_running_tid]->status == RUNNING) {
+void move_current_running_thread_to_ready()
+{
+    if (threads_vec[current_running_tid]->status == RUNNING)
+    {
         threads_vec[current_running_tid]->status = READY;
         ready_threads_queue.push(current_running_tid);
     }
@@ -211,7 +233,8 @@ void move_current_running_thread_to_ready() {
  * @brief The signal handler for SIGVTALRM.
  * @param signal required by sa.sa_handler
  */
-void timer_handler(int signal) {
+void timer_handler(int signal)
+{
     wake_sleeping_threads();
     move_current_running_thread_to_ready();
 
@@ -221,14 +244,18 @@ void timer_handler(int signal) {
 /**
  * @brief Frees all allocated resources.
  */
-void free() {
-    for (const auto t: threads_vec) {
-        if (t != nullptr) {
-            delete [] t->stack;
+void free()
+{
+    for (const auto t : threads_vec)
+    {
+        if (t != nullptr)
+        {
+            delete[] t->stack;
             delete t;
         }
     }
-    for (const auto t: sleeping_threads_vec) {
+    for (const auto t : sleeping_threads_vec)
+    {
     }
 }
 
@@ -238,9 +265,11 @@ void free() {
  * This function creates a signal set with SIGVTALRM and sets up the signal handler to call timer_handler
  * when SIGVTALRM is raised.
  */
-void setup_SIGVTALRM_handler() {
+void setup_SIGVTALRM_handler()
+{
     // create signal set with SIGVTALRM in it
-    if (sigemptyset(&signals_set) == -1 || sigaddset(&signals_set, SIGVTALRM) == -1) {
+    if (sigemptyset(&signals_set) == -1 || sigaddset(&signals_set, SIGVTALRM) == -1)
+    {
         fprintf(stderr, SYSTEM_ERROR_MSG_PREFIX, SIGNAL_SET_CONFIG_ERROR_MSG);
         free();
         exit(ERROR_CODE);
@@ -250,8 +279,8 @@ void setup_SIGVTALRM_handler() {
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
 
-
-    if (sigaction(SIGVTALRM, &sa, nullptr) < 0) {
+    if (sigaction(SIGVTALRM, &sa, nullptr) < 0)
+    {
         fprintf(stderr, SYSTEM_ERROR_MSG_PREFIX, SIGACTION_FAILURE_MSG);
         free();
         exit(ERROR_CODE);
@@ -264,11 +293,15 @@ void setup_SIGVTALRM_handler() {
  * @param tid The thread ID.
  * @return A pointer to the newly allocated TCB.
  */
-TCB *allocate_new_tcb(size_t tid) {
-    try {
+TCB *allocate_new_tcb(size_t tid)
+{
+    try
+    {
         threads_vec[tid] = new TCB(tid);
         return threads_vec[tid];
-    } catch (std::bad_alloc &_) {
+    }
+    catch (std::bad_alloc &_)
+    {
         fprintf(stderr, THREAD_ERROR_MSG_PREFIX, BAD_ALLOCATION_MSG);
         free();
         exit(ERROR_CODE);
@@ -280,10 +313,14 @@ TCB *allocate_new_tcb(size_t tid) {
  *
  * @param thread The thread for which to allocate a new stack.
  */
-void allocate_new_stack(TCB *thread) {
-    try {
+void allocate_new_stack(TCB *thread)
+{
+    try
+    {
         thread->stack = new char[STACK_SIZE];
-    } catch (std::bad_alloc &_) {
+    }
+    catch (std::bad_alloc &_)
+    {
         fprintf(stderr, THREAD_ERROR_MSG_PREFIX, BAD_ALLOCATION_MSG);
         free();
         exit(ERROR_CODE);
@@ -295,9 +332,12 @@ void allocate_new_stack(TCB *thread) {
  *
  * @return The lowest available thread ID, or -1 if no IDs are available.
  */
-int find_lowest_tid() {
-    for (size_t i = 0; i < MAX_THREAD_NUM; ++i) {
-        if (threads_vec[i] == nullptr) {
+int find_lowest_tid()
+{
+    for (size_t i = 0; i < MAX_THREAD_NUM; ++i)
+    {
+        if (threads_vec[i] == nullptr)
+        {
             return i;
         }
     }
@@ -315,9 +355,11 @@ int find_lowest_tid() {
  * It is an error to call this function with non-positive quantum_usecs.
  *
  * @return On success, return 0. On failure, return -1.
-*/
-int uthread_init(int quantum_usecs) {
-    if (quantum_usecs <= 0) {
+ */
+int uthread_init(int quantum_usecs)
+{
+    if (quantum_usecs <= 0)
+    {
         fprintf(stderr, THREAD_ERROR_MSG_PREFIX, NON_POSITIVE_QUANTUM_MSG);
         return ERROR_CODE;
     }
@@ -327,20 +369,19 @@ int uthread_init(int quantum_usecs) {
 
     threads_vec[0]->run_thread();
 
-
     sigsetjmp(threads_vec[0]->env, 1);
-    sigemptyset (&(threads_vec[0]->env->__saved_mask));
+    sigemptyset(&(threads_vec[0]->env->__saved_mask));
     sigemptyset(&signals_set);
 
     setup_SIGVTALRM_handler();
     configure_timer(quantum_usecs);
 
-    if (setitimer(ITIMER_VIRTUAL, &timer, nullptr) < 0) {
-        fprintf (stderr, "thread library error: setitimer error\n");
+    if (setitimer(ITIMER_VIRTUAL, &timer, nullptr) < 0)
+    {
+        fprintf(stderr, "thread library error: setitimer error\n");
         free();
         return ERROR_CODE;
     }
-
 
     return SUCCESS_CODE;
 }
@@ -351,9 +392,10 @@ int uthread_init(int quantum_usecs) {
  * @param thread The thread to initialize.
  * @param entry_point The entry point function for the thread.
  */
-void init_thread_context(TCB *thread, thread_entry_point entry_point) {
-    address_t sp = (address_t) thread->stack + STACK_SIZE - sizeof(address_t);
-    address_t pc = (address_t) entry_point;
+void init_thread_context(TCB *thread, thread_entry_point entry_point)
+{
+    address_t sp = (address_t)thread->stack + STACK_SIZE - sizeof(address_t);
+    address_t pc = (address_t)entry_point;
     sigsetjmp((thread->env), 1);
     (thread->env)->__jmpbuf[JB_SP] = translate_address(sp);
     (thread->env)->__jmpbuf[JB_PC] = translate_address(pc);
@@ -371,18 +413,21 @@ void init_thread_context(TCB *thread, thread_entry_point entry_point) {
  * It is an error to call this function with a null entry_point.
  *
  * @return On success, return the ID of the created thread. On failure, return -1.
-*/
-int uthread_spawn(thread_entry_point entry_point) {
+ */
+int uthread_spawn(thread_entry_point entry_point)
+{
     block_signals();
 
-    if (entry_point == nullptr) {
+    if (entry_point == nullptr)
+    {
         fprintf(stderr, THREAD_ERROR_MSG_PREFIX, ENTRY_POINT_ERROR_MSG);
         unblock_signals();
         return ERROR_CODE;
     }
 
     int tid = find_lowest_tid();
-    if (tid == -1) {
+    if (tid == -1)
+    {
         fprintf(stderr, THREAD_ERROR_MSG_PREFIX, OVERFLOW_THREADS_ERROR_MSG);
         unblock_signals();
         return ERROR_CODE;
@@ -402,12 +447,15 @@ int uthread_spawn(thread_entry_point entry_point) {
  *
  * @param tid The thread ID to remove.
  */
-void remove_thread_from_ready_queue(int tid) {
+void remove_thread_from_ready_queue(int tid)
+{
     std::queue<int> temp_queue;
-    while (!ready_threads_queue.empty()) {
+    while (!ready_threads_queue.empty())
+    {
         int ready_tid = ready_threads_queue.front();
         ready_threads_queue.pop();
-        if (ready_tid != tid) {
+        if (ready_tid != tid)
+        {
             temp_queue.push(ready_tid);
         }
     }
@@ -419,9 +467,11 @@ void remove_thread_from_ready_queue(int tid) {
  *
  * @param tid The thread ID to remove.
  */
-void remove_thread_from_sleeping_vec(int tid) {
+void remove_thread_from_sleeping_vec(int tid)
+{
     auto it = std::remove_if(sleeping_threads_vec.begin(), sleeping_threads_vec.end(),
-                             [tid](const SleepingThread &st) { return st.tid == tid; });
+                             [tid](const SleepingThread &st)
+                             { return st.tid == tid; });
     sleeping_threads_vec.erase(it, sleeping_threads_vec.end());
 }
 
@@ -434,33 +484,39 @@ void remove_thread_from_sleeping_vec(int tid) {
  *
  * @return The function returns 0 if the thread was successfully terminated and -1 otherwise. If a thread terminates
  * itself or the main thread is terminated, the function does not return.
-*/
-int uthread_terminate(int tid) {
+ */
+int uthread_terminate(int tid)
+{
     block_signals();
 
-    if (tid < 0 || tid >= MAX_THREAD_NUM || threads_vec[tid] == nullptr) {
+    if (tid < 0 || tid >= MAX_THREAD_NUM || threads_vec[tid] == nullptr)
+    {
         fprintf(stderr, THREAD_ERROR_MSG_PREFIX, INVALID_TID_MSG);
         return ERROR_CODE;
     }
 
-    if (tid == 0) {
+    if (tid == 0)
+    {
         free();
         exit(SUCCESS_CODE);
     }
 
     bool is_running_thread = (current_running_tid == tid);
 
-    if (threads_vec[tid]->status == READY) {
+    if (threads_vec[tid]->status == READY)
+    {
         remove_thread_from_ready_queue(tid);
     }
-    if (threads_vec[tid]->status == SLEEPING) {
+    if (threads_vec[tid]->status == SLEEPING)
+    {
         remove_thread_from_sleeping_vec(tid);
     }
     delete[] threads_vec[tid]->stack;
     delete threads_vec[tid];
     threads_vec[tid] = nullptr;
 
-    if (is_running_thread) {
+    if (is_running_thread)
+    {
         round_robin();
     }
     unblock_signals();
@@ -475,26 +531,32 @@ int uthread_terminate(int tid) {
  * BLOCKED state has no effect and is not considered an error.
  *
  * @return On success, return 0. On failure, return -1.
-*/
-int uthread_block(int tid) {
+ */
+int uthread_block(int tid)
+{
     block_signals();
 
-    if (tid < 0 || tid >= MAX_THREAD_NUM || threads_vec[tid] == nullptr || tid == 0) {
+    if (tid < 0 || tid >= MAX_THREAD_NUM || threads_vec[tid] == nullptr || tid == 0)
+    {
         unblock_signals();
         return ERROR_CODE;
     }
 
-    if (threads_vec[tid]->status == BLOCKED) {
+    if (threads_vec[tid]->status == BLOCKED)
+    {
         unblock_signals();
         return SUCCESS_CODE;
     }
-    if (threads_vec[tid]->status == READY) {
+    if (threads_vec[tid]->status == READY)
+    {
         remove_thread_from_ready_queue(tid);
     }
 
     threads_vec[tid]->status = BLOCKED;
-    if (tid == current_running_tid) {
-        if (sigsetjmp(threads_vec[current_running_tid]->env, 1) == 0) {
+    if (tid == current_running_tid)
+    {
+        if (sigsetjmp(threads_vec[current_running_tid]->env, 1) == 0)
+        {
             round_robin();
         }
     }
@@ -510,16 +572,19 @@ int uthread_block(int tid) {
  * ID tid exists it is considered an error.
  *
  * @return On success, return 0. On failure, return -1.
-*/
-int uthread_resume(int tid) {
+ */
+int uthread_resume(int tid)
+{
     block_signals();
 
-    if (tid < 0 || tid >= MAX_THREAD_NUM || threads_vec[tid] == nullptr) {
+    if (tid < 0 || tid >= MAX_THREAD_NUM || threads_vec[tid] == nullptr)
+    {
         unblock_signals();
         return ERROR_CODE;
     }
 
-    if (threads_vec[tid]->status != BLOCKED) {
+    if (threads_vec[tid]->status != BLOCKED)
+    {
         unblock_signals();
         return SUCCESS_CODE;
     }
@@ -542,26 +607,31 @@ int uthread_resume(int tid) {
  * It is considered an error if the main thread (tid == 0) calls this function.
  *
  * @return On success, return 0. On failure, return -1.
-*/
-int uthread_sleep(int num_quantums) {
+ */
+int uthread_sleep(int num_quantums)
+{
     block_signals();
-    if (num_quantums < 0) {
+    if (num_quantums < 0)
+    {
         fprintf(stderr, THREAD_ERROR_MSG_PREFIX, QUANTUMS_ERROR_MSG);
         unblock_signals();
         return ERROR_CODE;
     }
-    if (current_running_tid == 0) {
+    if (current_running_tid == 0)
+    {
         fprintf(stderr, THREAD_ERROR_MSG_PREFIX, MAIN_THREAD_ERROR_MSG);
         unblock_signals();
         return ERROR_CODE;
     }
-    if (num_quantums == 0) {
+    if (num_quantums == 0)
+    {
         unblock_signals();
         return SUCCESS_CODE;
     }
     threads_vec[current_running_tid]->status = SLEEPING;
     sleeping_threads_vec.push_back(SleepingThread(current_running_tid, total_quantums + num_quantums));
-    if (sigsetjmp(threads_vec[current_running_tid]->env, 1) == 0) {
+    if (sigsetjmp(threads_vec[current_running_tid]->env, 1) == 0)
+    {
         round_robin();
     }
     unblock_signals();
@@ -572,8 +642,9 @@ int uthread_sleep(int num_quantums) {
  * @brief Returns the thread ID of the calling thread.
  *
  * @return The ID of the calling thread.
-*/
-int uthread_get_tid() {
+ */
+int uthread_get_tid()
+{
     return current_running_tid;
 }
 
@@ -584,8 +655,9 @@ int uthread_get_tid() {
  * Each time a new quantum starts, regardless of the reason, this number should be increased by 1.
  *
  * @return The total number of quantums.
-*/
-int uthread_get_total_quantums() {
+ */
+int uthread_get_total_quantums()
+{
     return total_quantums;
 }
 
@@ -597,10 +669,12 @@ int uthread_get_total_quantums() {
  * also the current quantum). If no thread with ID tid exists it is considered an error.
  *
  * @return On success, return the number of quantums of the thread with ID tid. On failure, return -1.
-*/
-int uthread_get_quantums(int tid) {
+ */
+int uthread_get_quantums(int tid)
+{
     block_signals();
-    if (tid < 0 || tid >= MAX_THREAD_NUM || threads_vec[tid] == nullptr) {
+    if (tid < 0 || tid >= MAX_THREAD_NUM || threads_vec[tid] == nullptr)
+    {
         fprintf(stderr, THREAD_ERROR_MSG_PREFIX, INVALID_TID_MSG);
         unblock_signals();
         return ERROR_CODE;
