@@ -87,7 +87,6 @@ struct TCB {
     sigjmp_buf env;
     char *stack;
     size_t quantums;
-    bool is_sleeping = false;
 
     explicit TCB(int id) : id(id), status(READY), stack(nullptr), quantums(0) {}
 
@@ -140,8 +139,6 @@ void unblock_signals() {
 
 /**
  * @brief wakes up sleeping threads that have exceeded their quantum limit.
- *//**
- * @brief wakes up sleeping threads that have exceeded their quantum limit.
  */
 void wake_sleeping_threads() {
     std::vector<SleepingThread> still_sleeping;
@@ -152,12 +149,10 @@ void wake_sleeping_threads() {
                 threads_vec[tid]->status  = READY;
                 ready_threads_queue.push(tid);
             }
-            threads_vec[tid]->is_sleeping = false;
         }
     }
     sleeping_threads_vec = std::move(still_sleeping);
 }
-
 
 
 /**
@@ -424,7 +419,7 @@ int uthread_terminate(int tid) {
     if (threads_vec[tid]->status == READY) {
         remove_thread_from_ready_queue(tid);
     }
-    if (threads_vec[tid]->is_sleeping) {
+    if (threads_vec[tid]->status == SLEEPING) {
         remove_thread_from_sleeping_vec(tid);
     }
     delete[] threads_vec[tid]->stack;
@@ -497,11 +492,6 @@ int uthread_resume(int tid) {
         return SUCCESS_CODE;
     }
 
-    else if (threads_vec[tid]->is_sleeping) {
-            threads_vec[tid]->status = SLEEPING;
-            unblock_signals();
-            return SUCCESS_CODE;
-        }
     threads_vec[tid]->status = READY;
     ready_threads_queue.push(tid);
     unblock_signals();
@@ -536,7 +526,6 @@ int uthread_sleep(int num_quantums) {
         unblock_signals();
         return SUCCESS_CODE;
     }
-    threads_vec[current_running_tid]->is_sleeping = true;
     threads_vec[current_running_tid]->status = SLEEPING;
     sleeping_threads_vec.push_back(SleepingThread(current_running_tid, total_quantums + num_quantums));
     if (sigsetjmp(threads_vec[current_running_tid]->env, 1) == 0) {
