@@ -1,0 +1,24 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "build test2",
+        "type": "shell",
+        "command": "g++",
+        "args": [
+          "Resources/tests/test2.cpp",
+          "Resources/uthreads.cpp",
+          "-o",
+          "test2",
+          "-g",              // Enable debug info
+          "-std=c++11"       // Or any version your code uses
+        ],
+        "group": {
+          "kind": "build",
+          "isDefault": true
+        },
+        "problemMatcher": ["$gcc"]
+      }
+    ]
+  }
+  
