@@ -84,11 +84,11 @@ enum thread_states
  */
 struct TCB
 {
-    size_t id;
+    int id;
     thread_states status;
     sigjmp_buf env;
     char *stack;
-    size_t quantums;
+    int quantums;
 
     explicit TCB(int id) : id(id), status(READY), stack(nullptr), quantums(0) {}
 
@@ -103,8 +103,8 @@ struct TCB
 // Struct to hold sleeping threads
 struct SleepingThread
 {
-    size_t tid;
-    size_t sleep_quantums;
+    int tid;
+    int sleep_quantums;
     SleepingThread(int id, int sleep_quantums) : tid(id), sleep_quantums(sleep_quantums)
     {
     }
@@ -116,9 +116,9 @@ std::vector<SleepingThread> sleeping_threads_vec;
 std::queue<int> ready_threads_queue;
 struct itimerval timer;
 struct sigaction sa;
-size_t total_quantums = 1; // Total quantums across threads
+int total_quantums = 1; // Total quantums across threads
 sigset_t signals_set;
-size_t current_running_tid;
+int current_running_tid;
 
 /**
  * @brief Unblocks signals specified in the set using sigprocmask.
@@ -153,7 +153,7 @@ void wake_sleeping_threads()
 
     for (auto &thread : sleeping_threads_vec)
     {
-        size_t tid = thread.tid;
+        int tid = thread.tid;
         if (threads_vec[tid] == nullptr)
         {
             // Thread has been terminated
@@ -180,7 +180,7 @@ void wake_sleeping_threads()
  *
  * @param quantum_usecs The quantum time in microseconds.
  */
-void configure_timer(size_t quantum_usecs)
+void configure_timer(int quantum_usecs)
 {
     timer.it_value.tv_sec = quantum_usecs / SECOND;
     timer.it_value.tv_usec = quantum_usecs % SECOND;
@@ -206,7 +206,7 @@ void round_robin() {
     }
     else
     {
-        size_t next_tid = ready_threads_queue.front();
+        int next_tid = ready_threads_queue.front();
         ready_threads_queue.pop();
 
         // Ensure next thread exists (could have been terminated)
@@ -250,16 +250,13 @@ void timer_handler(int signal)
  */
 void free()
 {
-    for (const auto t : threads_vec)
+    for (const auto _ : threads_vec)
     {
-        if (t != nullptr)
+        if (_ != nullptr)
         {
-            delete[] t->stack;
-            delete t;
+            delete[] _->stack;
+            delete _;
         }
-    }
-    for (const auto t : sleeping_threads_vec)
-    {
     }
 }
 
@@ -297,7 +294,7 @@ void setup_SIGVTALRM_handler()
  * @param tid The thread ID.
  * @return A pointer to the newly allocated TCB.
  */
-TCB *allocate_new_tcb(size_t tid)
+TCB *allocate_new_tcb(int tid)
 {
     try
     {
@@ -338,7 +335,7 @@ void allocate_new_stack(TCB *thread)
  */
 int find_lowest_tid()
 {
-    for (size_t i = 0; i < MAX_THREAD_NUM; ++i)
+    for (int i = 0; i < MAX_THREAD_NUM; ++i)
     {
         if (threads_vec[i] == nullptr)
         {
