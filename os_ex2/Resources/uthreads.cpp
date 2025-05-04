@@ -1,6 +1,3 @@
-//
-// Created by RONEN LEVY on 23/04/2025.
-//
 #include <csetjmp>
 #include "uthreads.h"
 #include <queue>
@@ -106,7 +103,7 @@ struct SleepingThread {
 };
 
 // Global Vars
-std::vector<TCB *> threads_vec(MAX_THREAD_NUM, nullptr);
+std::vector<TCB*> threads_vec(MAX_THREAD_NUM, nullptr);
 std::vector<SleepingThread> sleeping_threads_vec;
 std::queue<int> ready_threads_queue;
 struct itimerval timer;
@@ -114,7 +111,6 @@ struct sigaction sa;
 size_t total_quantums = 1; // Total quantums across threads
 sigset_t signals_set;
 size_t current_running_tid;
-
 
 /**
  * @brief Unblocks signals specified in the set using sigprocmask.
@@ -136,19 +132,25 @@ void unblock_signals() {
     }
 }
 
-
 /**
  * @brief wakes up sleeping threads that have exceeded their quantum limit.
  */
 void wake_sleeping_threads() {
     std::vector<SleepingThread> still_sleeping;
+
     for (auto &thread : sleeping_threads_vec) {
         size_t tid = thread.tid;
-        if (total_quantums >= thread.sleep_quantums && threads_vec[tid] != nullptr) {
-            if(threads_vec[tid]->status == SLEEPING){
-                threads_vec[tid]->status  = READY;
+        if (threads_vec[tid] == nullptr) {
+            // Thread has been terminated
+            continue;
+        }
+        if (total_quantums >= thread.sleep_quantums) {
+            if (threads_vec[tid]->status == SLEEPING) {
+                threads_vec[tid]->status = READY;
                 ready_threads_queue.push(tid);
             }
+        } else {
+            still_sleeping.push_back(thread);
         }
     }
     sleeping_threads_vec = std::move(still_sleeping);
@@ -195,6 +197,9 @@ void round_robin() {
     unblock_signals();
 }
 
+/**
+ * @brief Moves the current running thread to the ready state if it is currently running.
+ */
 void move_current_running_thread_to_ready() {
     if (threads_vec[current_running_tid]->status == RUNNING) {
         threads_vec[current_running_tid]->status = READY;
@@ -227,7 +232,6 @@ void free() {
     }
 }
 
-
 /**
  * @brief Sets up the SIGVTALRM signal handler.
  *
@@ -254,6 +258,12 @@ void setup_SIGVTALRM_handler() {
     }
 }
 
+/**
+ * @brief Allocates a new TCB for the thread with the given ID.
+ *
+ * @param tid The thread ID.
+ * @return A pointer to the newly allocated TCB.
+ */
 TCB *allocate_new_tcb(size_t tid) {
     try {
         threads_vec[tid] = new TCB(tid);
@@ -265,6 +275,11 @@ TCB *allocate_new_tcb(size_t tid) {
     }
 }
 
+/**
+ * @brief Allocates a new stack for the given thread.
+ *
+ * @param thread The thread for which to allocate a new stack.
+ */
 void allocate_new_stack(TCB *thread) {
     try {
         thread->stack = new char[STACK_SIZE];
@@ -275,7 +290,11 @@ void allocate_new_stack(TCB *thread) {
     }
 }
 
-
+/**
+ * @brief Finds the lowest available thread ID.
+ *
+ * @return The lowest available thread ID, or -1 if no IDs are available.
+ */
 int find_lowest_tid() {
     for (size_t i = 0; i < MAX_THREAD_NUM; ++i) {
         if (threads_vec[i] == nullptr) {
@@ -326,6 +345,12 @@ int uthread_init(int quantum_usecs) {
     return SUCCESS_CODE;
 }
 
+/**
+ * @brief Initializes the thread context for the given thread.
+ *
+ * @param thread The thread to initialize.
+ * @param entry_point The entry point function for the thread.
+ */
 void init_thread_context(TCB *thread, thread_entry_point entry_point) {
     address_t sp = (address_t) thread->stack + STACK_SIZE - sizeof(address_t);
     address_t pc = (address_t) entry_point;
@@ -372,7 +397,11 @@ int uthread_spawn(thread_entry_point entry_point) {
     return tid;
 }
 
-
+/**
+ * @brief Removes the thread with the given ID from the ready queue.
+ *
+ * @param tid The thread ID to remove.
+ */
 void remove_thread_from_ready_queue(int tid) {
     std::queue<int> temp_queue;
     while (!ready_threads_queue.empty()) {
@@ -385,6 +414,11 @@ void remove_thread_from_ready_queue(int tid) {
     ready_threads_queue = temp_queue;
 }
 
+/**
+ * @brief Removes the thread with the given ID from the sleeping threads vector.
+ *
+ * @param tid The thread ID to remove.
+ */
 void remove_thread_from_sleeping_vec(int tid) {
     auto it = std::remove_if(sleeping_threads_vec.begin(), sleeping_threads_vec.end(),
                              [tid](const SleepingThread &st) { return st.tid == tid; });
@@ -433,7 +467,6 @@ int uthread_terminate(int tid) {
     return SUCCESS_CODE;
 }
 
-
 /**
  * @brief Blocks the thread with ID tid. The thread may be resumed later using uthread_resume.
  *
@@ -470,7 +503,6 @@ int uthread_block(int tid) {
     return SUCCESS_CODE;
 }
 
-
 /**
  * @brief Resumes a blocked thread with ID tid and moves it to the READY state.
  *
@@ -497,6 +529,7 @@ int uthread_resume(int tid) {
     unblock_signals();
     return SUCCESS_CODE;
 }
+
 /**
  * @brief Blocks the RUNNING thread for num_quantums quantums.
  *
@@ -544,7 +577,6 @@ int uthread_get_tid() {
     return current_running_tid;
 }
 
-
 /**
  * @brief Returns the total number of quantums since the library was initialized, including the current quantum.
  *
@@ -556,7 +588,6 @@ int uthread_get_tid() {
 int uthread_get_total_quantums() {
     return total_quantums;
 }
-
 
 /**
  * @brief Returns the number of quantums the thread with ID tid was in RUNNING state.
