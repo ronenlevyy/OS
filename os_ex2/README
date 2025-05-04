@@ -1,0 +1,52 @@
+karin.lein, Ronenlevy133
+Karine Lein (322644733),  Ronen Levy (319130241)
+EX: 1
+
+FILES:
+README -- A README file.
+uthreads.cpp -- User-Level Threads Library
+Makefile -- Our Makefile for compiling
+
+REMARKS:
+
+### ANSWERS:
+Question 1:
+a. - The sigsetjmp gets a buffer where the current execution context is saved and a flag that determines whether to save
+     the current signal mask. The function saves the current execution context (registers, sp, pc).
+    - The siglongjmp gets a buffer containing a previously saved execution context (from a previous sigsetjmp call) and a
+      value to be returned by the corresponding sigsetjmp call when the context is restored. The function restores the
+      execution context and signal mask (if saved) from the buffer that was previously saved by sigsetjmp.
+b. - The sigsetjmp function can save the current signal mask if the second parameter is non-zero.
+   - The siglongjmp function can restore the signal mask that was saved by sigsetjmp.
+
+Question 2:
+A general use of user level threads is implementing concurrent operations within applications. For example, messaging
+or social media apps like WhatsApp and Instagram often use user level threads to manage background tasks, such as
+syncing messages, uploading photos, or fetching new content, without disrupting the user interface.
+User level threads are a reasonable choice in this context because they allow lightweight, fast context switching and
+can be scheduled independently of the operating system.
+
+Question 3:
+Advantages:
+-  Each tab runs in a separate process with its own memory space, so if one tab crashes, it won't affect other tabs.
+- Process level isolation provides stronger security boundaries than threads, preventing malicious code in one tab from
+    accessing data in another tab.
+ - The operating system can better manage and limit resources per process, allowing for better overall system stability.
+Disadvantages:
+- Each process requires more memory than a thread would.
+-  Creating a new process takes more time than creating a new thread, potentially leading to slower tab opening.
+
+Question 4:
+When you type "kill pid" on the keyboard:
+1. The keyboard sends an interrupt to the OS.
+2. The operating system processes this notification through its interrupt handling mechanism and forwards the typed
+characters to the shell.
+3. The shell interprets the command and sends a SIGTERM signal to the process with the specified PID.
+4. The kernel then delivers the termination signal (SIGTERM) to Shotwell's memory space.
+5. Shotwell responds to the signal by cleaning up resources and exiting its execution flow.
+
+Question 5:
+Real time refers to actual wall clock time that passes in the physical world. For example, measuring how long it takes
+to download a large file from the internet
+Virtual time is the CPU time consumed only by a specific process. For example, measuring only the CPU time a program
+uses to sort a thousand numbers, excluding time when the CPU was handling other programs
