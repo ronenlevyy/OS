@@ -191,8 +191,12 @@ void configure_timer(size_t quantum_usecs)
 /**
  * @brief Use Round Robin scheduling to switch between threads.
  */
-void round_robin()
-{
+void round_robin() {
+    if (threads_vec[current_running_tid] != nullptr) {
+        if (sigsetjmp(threads_vec[current_running_tid]->env, 1) == 1) {
+            return;
+        }
+    }
     block_signals();
     total_quantums++;
 
@@ -287,12 +291,6 @@ void setup_SIGVTALRM_handler()
     }
 }
 
-/**
- * @brief Allocates a new TCB for the thread with the given ID.
- *
- * @param tid The thread ID.
- * @return A pointer to the newly allocated TCB.
- */
 TCB *allocate_new_tcb(size_t tid)
 {
     try
@@ -308,11 +306,6 @@ TCB *allocate_new_tcb(size_t tid)
     }
 }
 
-/**
- * @brief Allocates a new stack for the given thread.
- *
- * @param thread The thread for which to allocate a new stack.
- */
 void allocate_new_stack(TCB *thread)
 {
     try
@@ -327,11 +320,6 @@ void allocate_new_stack(TCB *thread)
     }
 }
 
-/**
- * @brief Finds the lowest available thread ID.
- *
- * @return The lowest available thread ID, or -1 if no IDs are available.
- */
 int find_lowest_tid()
 {
     for (size_t i = 0; i < MAX_THREAD_NUM; ++i)
@@ -386,12 +374,6 @@ int uthread_init(int quantum_usecs)
     return SUCCESS_CODE;
 }
 
-/**
- * @brief Initializes the thread context for the given thread.
- *
- * @param thread The thread to initialize.
- * @param entry_point The entry point function for the thread.
- */
 void init_thread_context(TCB *thread, thread_entry_point entry_point)
 {
     address_t sp = (address_t)thread->stack + STACK_SIZE - sizeof(address_t);
@@ -462,11 +444,6 @@ void remove_thread_from_ready_queue(int tid)
     ready_threads_queue = temp_queue;
 }
 
-/**
- * @brief Removes the thread with the given ID from the sleeping threads vector.
- *
- * @param tid The thread ID to remove.
- */
 void remove_thread_from_sleeping_vec(int tid)
 {
     auto it = std::remove_if(sleeping_threads_vec.begin(), sleeping_threads_vec.end(),
