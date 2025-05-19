@@ -1,4 +1,4 @@
-karin.lein, Ronenlevy133
+karin.lein, ronenlevy133
 Karine Lein (322644733),  Ronen Levy (319130241)
 EX: 1
 
@@ -12,22 +12,20 @@ page_size.png -- A screenshot of the getconf PAGE_SIZE command
 
 REMARKS:
 
-### ANSWERS:
+ANSWERS:
 
-#### Assignment 1
+Assignment 1:
 The program expects a single argument and is executed with it using the execve() system call. At the beginning of its
 execution, the program sets up its memory environment. It uses the brk(NULL) call to query the current end of the heap,
 and mmap() to allocate 8192 bytes of memory. Then, it attempts to access /etc/ld.so.preload, and proceeds to load the 
 dynamic linker cache via openat() to find shared library paths. The program uses newfstatat() to get metadata about the
 opened cache file, maps it into memory with mmap() for reading, and then closes the file. Next, the program opens the
 standard C library using openat() and uses multiple mmap() calls to map its different segments (read-only, executable, 
-writable)into memory. After the library is mapped, the file descriptor is closed.
-
+writable) into memory. After the library is mapped, the file descriptor is closed.
 Following library loading, the program performs thread and memory initialization. It allocates memory using mmap() and
 configures thread identification using set_tid_address(), set_robust_list(), and rseq(). It also uses mprotect() to 
 update memory protections and prlimit64() to query stack size limits. Memory used for the cache is then unmapped using
 munmap().
-
 Once initialization is complete, the program creates a directory named Welcome using the mkdir system call.  Then, it 
 adjusts the program heap, requesting more space. Inside this directory, it creates three files: Welcome, To, and OS-2024
 with write permissions. It then checks the file status (if it’s ready) and writes specific messages into each file. The 
@@ -36,8 +34,7 @@ first file, Welcome, contains the string "karin.lein\nIf you haven't read t...".
 After writing, the program cleans up by removing the three files using unlink(), and then deletes the Welcome directory 
 itself with rmdir(). Finally, the program is calling exit_group(0), meaning a successful exit.
 
-#### Assignment 2
-
+Assignment 2:
 In the beginning, the curve is similar to the sequential access curve. It is mostly stable and the values are near 1.
 Then, after crossing the L1 boundary, the curve sharply increases, with every increase in the array size.
 Crossing the L1 boundary causes a sharp latency increase because it represents the first major transition from the
@@ -54,8 +51,6 @@ long as the data stays in RAM and doesn’t spill to disk.
 This is also an expected behaviour because each cache level has a distinct latency, and random access patterns
 highlight those transitions by maximizing cache misses. As data spills over from one level to the next, the curve
 reflects the jump in access cost.
-
-
 In the graph, we observe different behaviors for random and sequential memory access patterns.
 For random access, latency begins to increase significantly once the array size exceeds around 10^4 bytes. This is
 because random access lacks predictability. Each access could target any location in memory, making it difficult for the
@@ -68,10 +63,8 @@ accessing one element often loads the next several into cache (instead of loadin
 a consistently low latency for sequential access.
 This difference between the curves is something we could predict that will happen, because of the way the CPU strives to
 minimize the latency.
-
 Another pattern is how the random access latency curve shifts at cache boundaries, marked by vertical lines
 corresponding to the sizes of L1, L2, and L3 caches. Initially, for small array sizes that fit entirely within L1 cache,
-both random and sequential access exhibit low latency. However, once the array exceeds the L1 capacity, random access
 latency increases sharply. This is because L2 cache, while larger, is slower, and the lack of locality in random access
 results in poor cache utilization. The same pattern occurs at the L2 boundary as we transition to L3. Interestingly,
 after crossing the L3 cache boundary, the sharp increases in latency begin to level out. The curve still rises, but more
@@ -81,7 +74,6 @@ access pattern in memory, resulting in a smoother, more predictable growth in la
 
 
 Bonus:
-
 When the amount of data being accessed exceeds the size of the L3 cache, the system begins retrieving data from main
 memory (RAM), which causes a noticeable increase in random access latency. At a certain point—known as the Page Table
 Eviction Threshold—even the page table entries used for translating virtual addresses to physical ones no longer fit
