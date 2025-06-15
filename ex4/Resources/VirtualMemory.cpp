@@ -14,7 +14,7 @@ uint64_t extractBits(uint64_t address, int startBit, int numBits)
 }
 
 // Helper function to get page number from virtual address
-uint64_t getPageNumber(uint64_t virtualAddress)
+uint64_t getpageIndex(uint64_t virtualAddress)
 {
     return virtualAddress >> OFFSET_WIDTH;
 }
@@ -26,10 +26,10 @@ uint64_t getOffset(uint64_t virtualAddress)
 }
 
 // Helper function to get table index at a specific level
-uint64_t getTableIndex(uint64_t pageNumber, int level)
+uint64_t getTableIndex(uint64_t pageIndex, int level)
 {
     int startBit = (TABLES_DEPTH - 1 - level) * OFFSET_WIDTH;
-    return extractBits(pageNumber, startBit, OFFSET_WIDTH);
+    return extractBits(pageIndex, startBit, OFFSET_WIDTH);
 }
 
 int calculateCyclicDistance(uint64_t p1, uint64_t p2)
@@ -121,44 +121,44 @@ uint64_t findFrameToUse(uint64_t currentFrameIndex, uint64_t currentPageIndex)
 // Traverse page table hierarchy and create path if needed
 uint64_t traversePageTable(uint64_t virtualAddress)
 {
-    uint64_t pageNumber = getPageNumber(virtualAddress);
+    uint64_t pageIndex = getpageIndex(virtualAddress);
     uint64_t currentFrame = 0;
+
+    word_t nextFrame;
 
     for (int i = 0; i < TABLES_DEPTH; i++)
     {
-        uint64_t tableIndex = getTableIndex(pageNumber, i);
-        uint64_t entryAddress = currentFrame * PAGE_SIZE + tableIndex;
+        uint64_t tableIndex = getTableIndex(pageIndex, i);
+        uint64_t currentAddress = currentFrame * PAGE_SIZE + tableIndex;
 
-        word_t entry;
-        PMread(entryAddress, &entry);
+        PMread(currentAddress, &nextFrame);
 
-        if (entry == 0)
+        if (nextFrame == 0)
         {
 
             // Need to allocate a new frame
-            uint64_t newFrame = findFrameToUse(0, virtualAddress >> OFFSET_WIDTH);
-
-            // Clear the new frame
-            for (uint64_t offset = 0; offset < PAGE_SIZE; offset++)
-            {
-                PMwrite(newFrame * PAGE_SIZE + offset, 0);
-            }
+            uint64_t newFrameIndex = findFrameToUse(currentFrame, pageIndex);
 
             // If this is the last level, restore the page from storage
             if (i == TABLES_DEPTH - 1)
             {
-                uint64_t pageIndex = pageNumber;
-                PMrestore(newFrame, pageNumber);
+                PMrestore(newFrameIndex, pageIndex);
+            }
+            else
+            {
+                // Clear the new frame
+                for (uint64_t offset = 0; offset < PAGE_SIZE; offset++)
+                {
+                    PMwrite(newFrameIndex * PAGE_SIZE + offset, 0);
+                }
             }
 
             // Update the page table entry
-            PMwrite(entryAddress, newFrame);
-            currentFrame = newFrame;
+            PMwrite(currentAddress, newFrameIndex);
+            nextFrame = newFrameIndex;
         }
-        else
-        {
-            currentFrame = entry;
-        }
+        currentFrame = nextFrame;
+        currentAddress = nextFrame * PAGE_SIZE + tableIndex;
     }
 
     return currentFrame;
