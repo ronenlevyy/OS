@@ -43,7 +43,7 @@ int calculateCyclicDistance(uint64_t p1, uint64_t p2)
 void dfsTraverseTree(uint64_t targetFrameIndex, uint64_t targetPageIndex,
                      uint64_t currentFrameIndex, uint64_t currentPageIndex,
                      uint64_t parentEntry, uint64_t &evictParentEntry,
-                     uint level, uint64_t &highestFrameSeen,
+                     uint64_t level, uint64_t &highestFrameSeen,
                      uint64_t &evictFrame, uint64_t &evictPage,
                      uint64_t &freeFrame)
 {
@@ -67,7 +67,7 @@ void dfsTraverseTree(uint64_t targetFrameIndex, uint64_t targetPageIndex,
 
     for (uint64_t i = 0; i < PAGE_SIZE; i++)
     {
-        uint64_t curr_address = currentFrameIndex*PAGE_SIZE + i;
+        uint64_t curr_address = currentFrameIndex * PAGE_SIZE + i;
         PMread(curr_address, &word);
         if (word != 0)
         {
@@ -84,8 +84,6 @@ void dfsTraverseTree(uint64_t targetFrameIndex, uint64_t targetPageIndex,
             hasChildren = true;
         }
     }
-    // if the current frame isn't used, and isn't the root frame or parent
-    // frame
     if (!hasChildren && currentFrameIndex != 0 && currentFrameIndex != targetFrameIndex)
     {
         PMwrite(parentEntry, 0);
@@ -95,47 +93,29 @@ void dfsTraverseTree(uint64_t targetFrameIndex, uint64_t targetPageIndex,
 
 uint64_t findFrameToUse(uint64_t currentFrameIndex, uint64_t currentPageIndex)
 {
-    // First, look for an empty frame
-    for (uint64_t frame = 1; frame < NUM_FRAMES; frame++)
-    {
-        bool isEmpty = true;
-        for (uint64_t offset = 0; offset < PAGE_SIZE; offset++)
-        {
-            word_t value;
-            PMread(frame * PAGE_SIZE + offset, &value);
-            if (value != 0)
-            {
-                isEmpty = false;
-                break;
-            }
-        }
-        if (isEmpty)
-        {
-            return frame;
-        }
-    }
-    uint64_t max_frame = 0;
-    uint64_t empty_frame = (uint64_t)-1;
-    uint64_t frame_to_evict = (uint64_t)-1;
-    uint64_t page_to_evict = (uint64_t)-1;
-    uint64_t evicted_parent_address = (uint64_t)-1;
-    // dfsTraverseTree(currentFrameIndex, currentPageIndex, );
+    uint64_t maxFrame = 0;
+    uint64_t freeFrame = (uint64_t)-1;
+    uint64_t evictFrame = (uint64_t)-1;
+    uint64_t evictPage = (uint64_t)-1;
+    uint64_t evictParentEntry = (uint64_t)-1;
 
-    if (empty_frame != (uint64_t)-1)
+    dfsTraverseTree(currentFrameIndex, currentPageIndex, 0, 0, 0, evictParentEntry, 0, maxFrame, evictFrame, evictPage, freeFrame);
+
+    if (freeFrame != (uint64_t)-1)
     {
-        return empty_frame;
+        return freeFrame;
     }
-    if (max_frame + 1 < NUM_FRAMES)
+    if (maxFrame + 1 < NUM_FRAMES)
     {
-        return max_frame + 1;
+        return maxFrame + 1;
     }
-    if (frame_to_evict != (uint64_t)-1)
+    if (evictFrame != (uint64_t)-1)
     {
-        PMevict(frame_to_evict, page_to_evict);
-        PMwrite(evicted_parent_address, 0);
-        return frame_to_evict;
+        PMevict(evictFrame, evictPage);
+        PMwrite(evictParentEntry, 0);
+        return evictFrame;
     }
-    return -1;
+    return -1; // Fallback to frame 1 if all else fails
 }
 
 // Traverse page table hierarchy and create path if needed
@@ -168,7 +148,7 @@ uint64_t traversePageTable(uint64_t virtualAddress)
             if (i == TABLES_DEPTH - 1)
             {
                 uint64_t pageIndex = pageNumber;
-                PMrestore(newFrame, pageIndex);
+                PMrestore(newFrame, pageNumber);
             }
 
             // Update the page table entry
