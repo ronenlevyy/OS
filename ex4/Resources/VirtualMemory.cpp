@@ -2,10 +2,6 @@
 #include "PhysicalMemory.h"
 #include "MemoryConstants.h"
 
-#include <climits>
-#include <cstring>
-#include <algorithm>
-
 // Helper function to extract bits from an address
 uint64_t extractBits(uint64_t address, int startBit, int numBits)
 {
@@ -47,7 +43,7 @@ void dfsTraverseTree(uint64_t targetFrameIndex, uint64_t targetPageIndex,
                      uint64_t &evictFrame, uint64_t &evictPage,
                      uint64_t &freeFrame)
 {
-    highestFrameSeen = std::max(currentFrameIndex, highestFrameSeen);
+    highestFrameSeen = (currentFrameIndex < highestFrameSeen) ? highestFrameSeen : currentFrameIndex;
 
     if (level == TABLES_DEPTH)
     {
