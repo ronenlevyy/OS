@@ -1,6 +1,7 @@
 #include "VirtualMemory.h"
 #include "PhysicalMemory.h"
 #include "MemoryConstants.h"
+#include <algorithm>
 
 // Helper function to extract bits from an address
 uint64_t extractBits(uint64_t address, int startBit, int numBits)
@@ -9,14 +10,12 @@ uint64_t extractBits(uint64_t address, int startBit, int numBits)
     return (address >> startBit) & mask;
 }
 
-// Helper function to get page number from virtual address
-uint64_t getpageIndex(uint64_t virtualAddress)
-{
-    return virtualAddress >> OFFSET_WIDTH;
+uint64_t getPageNumber(uint64_t virtualAddress) {
+        return virtualAddress >> OFFSET_WIDTH;
 }
 
 // Helper function to get offset from virtual address
-uint64_t getOffset(uint64_t virtualAddress)
+uint64_t getPageOffset(uint64_t virtualAddress)
 {
     return extractBits(virtualAddress, 0, OFFSET_WIDTH);
 }
@@ -35,194 +34,141 @@ int calculateCyclicDistance(uint64_t p1, uint64_t p2)
     return (diff < cyclic_diff) ? diff : cyclic_diff;
 }
 
-// DFS function to traverse page table tree and find replacement candidates
-void dfsTraverseTree(uint64_t targetFrameIndex, uint64_t targetPageIndex,
-                     uint64_t currentFrameIndex, uint64_t currentPageIndex,
-                     uint64_t parentEntry, uint64_t &evictParentEntry,
-                     uint64_t level, uint64_t &highestFrameSeen,
-                     uint64_t &evictFrame, uint64_t &evictPage,
-                     uint64_t &freeFrame)
-{
-    highestFrameSeen = (currentFrameIndex < highestFrameSeen) ? highestFrameSeen : currentFrameIndex;
+// Frame allocation and management
+class FrameManager {
+private:
+    struct FrameSearchResult {
+        uint64_t maxFrame = 0;
+        uint64_t freeFrame = (uint64_t)-1;
+        uint64_t evictFrame = (uint64_t)-1;
+        uint64_t evictPage = (uint64_t)-1;
+        uint64_t evictParentEntry = (uint64_t)-1;
+    };
 
-    if (level == TABLES_DEPTH)
-    {
-        uint64_t new_dist = calculateCyclicDistance(targetPageIndex, currentPageIndex);
-        uint64_t old_dist = calculateCyclicDistance(targetPageIndex, evictPage);
-        if (evictFrame == (uint64_t)-1 || new_dist > old_dist)
-        {
-            evictFrame = currentFrameIndex;
-            evictPage = currentPageIndex;
-            evictParentEntry = parentEntry;
-        }
-        return;
-    }
+    static void searchFrameTree(uint64_t targetFrame, uint64_t targetPage,
+                              uint64_t currentFrame, uint64_t currentPage,
+                              uint64_t parentEntry, FrameSearchResult& result,
+                              uint64_t level) {
+        result.maxFrame = std::max(result.maxFrame, currentFrame);
 
-    bool hasChildren = false;
-    word_t word;
-
-    for (uint64_t i = 0; i < PAGE_SIZE; i++)
-    {
-        uint64_t curr_address = currentFrameIndex * PAGE_SIZE + i;
-        PMread(curr_address, &word);
-        if (word != 0)
-        {
-            dfsTraverseTree(targetFrameIndex, targetPageIndex, word,
-                            (currentPageIndex << OFFSET_WIDTH) + i, curr_address, evictParentEntry,
-                            level + 1, highestFrameSeen, evictFrame,
-                            evictPage, freeFrame);
-
-            // if an empty table was found, we can return
-            if (freeFrame != (uint64_t)-1)
-            {
-                return;
+        if (level == TABLES_DEPTH) {
+            if (result.evictFrame == (uint64_t)-1 || 
+                calculateCyclicDistance(targetPage, currentPage) >
+                calculateCyclicDistance(targetPage, result.evictPage)) {
+                result.evictFrame = currentFrame;
+                result.evictPage = currentPage;
+                result.evictParentEntry = parentEntry;
             }
-            hasChildren = true;
+            return;
+        }
+
+        bool hasChildren = false;
+        word_t entry;
+
+        for (uint64_t i = 0; i < PAGE_SIZE; i++) {
+            uint64_t entryAddr = currentFrame * PAGE_SIZE + i;
+            PMread(entryAddr, &entry);
+            
+            if (entry != 0) {
+                searchFrameTree(targetFrame, targetPage, entry,
+                              (currentPage << OFFSET_WIDTH) + i, entryAddr,
+                              result, level + 1);
+                
+                if (result.freeFrame != (uint64_t)-1) return;
+                hasChildren = true;
+            }
+        }
+
+        if (!hasChildren && currentFrame != 0 && currentFrame != targetFrame) {
+            PMwrite(parentEntry, 0);
+            result.freeFrame = currentFrame;
         }
     }
-    if (!hasChildren && currentFrameIndex != 0 && currentFrameIndex != targetFrameIndex)
-    {
-        PMwrite(parentEntry, 0);
-        freeFrame = currentFrameIndex;
+
+public:
+    static uint64_t allocateFrame(uint64_t currentFrame, uint64_t currentPage) {
+        FrameSearchResult result;
+        searchFrameTree(currentFrame, currentPage, 0, 0, 0, result, 0);
+
+        if (result.freeFrame != (uint64_t)-1) return result.freeFrame;
+        if (result.maxFrame + 1 < NUM_FRAMES) return result.maxFrame + 1;
+        if (result.evictFrame != (uint64_t)-1) {
+            PMevict(result.evictFrame, result.evictPage);
+            PMwrite(result.evictParentEntry, 0);
+            return result.evictFrame;
+        }
+        return -1;
     }
-}
+};
 
-uint64_t findFrameToUse(uint64_t currentFrameIndex, uint64_t currentPageIndex)
-{
-    uint64_t maxFrame = 0;
-    uint64_t freeFrame = (uint64_t)-1;
-    uint64_t evictFrame = (uint64_t)-1;
-    uint64_t evictPage = (uint64_t)-1;
-    uint64_t evictParentEntry = (uint64_t)-1;
+// Page table traversal and management
+class PageTableManager {
+public:
+    static uint64_t traverseAndAllocate(uint64_t virtualAddress) {
+        
+        uint64_t pageNumber = getPageNumber(virtualAddress);
+        uint64_t currentFrame = 0;
+        word_t nextFrame;
 
-    dfsTraverseTree(currentFrameIndex, currentPageIndex, 0, 0, 0, evictParentEntry, 0, maxFrame, evictFrame, evictPage, freeFrame);
+        for (int level = 0; level < TABLES_DEPTH; level++) {
+            uint64_t tableIndex = getTableIndex(pageNumber, level);
+            uint64_t entryAddress = currentFrame * PAGE_SIZE + tableIndex;
 
-    if (freeFrame != (uint64_t)-1)
-    {
-        return freeFrame;
-    }
-    if (maxFrame + 1 < NUM_FRAMES)
-    {
-        return maxFrame + 1;
-    }
-    if (evictFrame != (uint64_t)-1)
-    {
-        PMevict(evictFrame, evictPage);
-        PMwrite(evictParentEntry, 0);
-        return evictFrame;
-    }
-    return -1; // Fallback to frame 1 if all else fails
-}
+            PMread(entryAddress, &nextFrame);
 
-// Traverse page table hierarchy and create path if needed
-uint64_t traversePageTable(uint64_t virtualAddress)
-{
-    uint64_t pageIndex = getpageIndex(virtualAddress);
-    uint64_t currentFrame = 0;
-
-    word_t nextFrame;
-
-    for (int i = 0; i < TABLES_DEPTH; i++)
-    {
-        uint64_t tableIndex = getTableIndex(pageIndex, i);
-        uint64_t currentAddress = currentFrame * PAGE_SIZE + tableIndex;
-
-        PMread(currentAddress, &nextFrame);
-
-        if (nextFrame == 0)
-        {
-
-            // Need to allocate a new frame
-            uint64_t newFrameIndex = findFrameToUse(currentFrame, pageIndex);
-
-            // If this is the last level, restore the page from storage
-            if (i == TABLES_DEPTH - 1)
-            {
-                PMrestore(newFrameIndex, pageIndex);
-            }
-            else
-            {
-                // Clear the new frame
-                for (uint64_t offset = 0; offset < PAGE_SIZE; offset++)
-                {
-                    PMwrite(newFrameIndex * PAGE_SIZE + offset, 0);
+            if (nextFrame == 0) {
+                uint64_t newFrame = FrameManager::allocateFrame(currentFrame, pageNumber);
+                
+                if (level == TABLES_DEPTH - 1) {
+                    PMrestore(newFrame, pageNumber);
+                } else {
+                    for (uint64_t i = 0; i < PAGE_SIZE; i++) {
+                        PMwrite(newFrame * PAGE_SIZE + i, 0);
+                    }
                 }
+
+                PMwrite(entryAddress, newFrame);
+                nextFrame = newFrame;
             }
-
-            // Update the page table entry
-            PMwrite(currentAddress, newFrameIndex);
-            nextFrame = newFrameIndex;
+            currentFrame = nextFrame;
         }
-        currentFrame = nextFrame;
-        currentAddress = nextFrame * PAGE_SIZE + tableIndex;
+        return currentFrame;
     }
+};
 
-    return currentFrame;
-}
-
-/*
- * Initialize the virtual memory
- */
-void VMinitialize()
-{
-    for (uint64_t i = 0; i < PAGE_SIZE; i++)
-    {
+void VMinitialize() {
+    for (uint64_t i = 0; i < PAGE_SIZE; i++) {
         PMwrite(i, 0);
     }
 }
 
-/* reads a word from the given virtual address
- * and puts its content in *value.
- *
- * returns 1 on success.
- * returns 0 on failure (if the address cannot be mapped to a physical
- * address for any reason)
- */
-int VMread(uint64_t virtualAddress, word_t *value)
-{
-    if (virtualAddress >= VIRTUAL_MEMORY_SIZE or value == nullptr)
-    {
+int VMread(uint64_t virtualAddress, word_t *value) {
+    if (virtualAddress >= VIRTUAL_MEMORY_SIZE || value == nullptr) {
         return 0;
     }
 
-    uint64_t frameIndex = traversePageTable(virtualAddress);
-    if (frameIndex >= NUM_FRAMES)
-    {
-        return 0;
-    }
+    uint64_t frame = PageTableManager::traverseAndAllocate(virtualAddress);
+    if (frame >= NUM_FRAMES) return 0;
 
-    uint64_t offset = getOffset(virtualAddress);
-    uint64_t physicalAddress = frameIndex * PAGE_SIZE + offset;
-    if (physicalAddress >= RAM_SIZE)
-    {
-        return 0; // Prevent illegal access
-    }
-
+    uint64_t offset = getPageOffset(virtualAddress);
+    uint64_t physicalAddress = frame * PAGE_SIZE + offset;
+    
+    if (physicalAddress >= RAM_SIZE) return 0;
+    
     PMread(physicalAddress, value);
     return 1;
 }
 
-/* writes a word to the given virtual address
- *
- * returns 1 on success.
- * returns 0 on failure (if the address cannot be mapped to a physical
- * address for any reason)
- */
-int VMwrite(uint64_t virtualAddress, word_t value)
-{
-    if (virtualAddress >= VIRTUAL_MEMORY_SIZE)
-    {
+int VMwrite(uint64_t virtualAddress, word_t value) {
+    if (virtualAddress >= VIRTUAL_MEMORY_SIZE) {
         return 0;
     }
 
-    uint64_t frameIndex = traversePageTable(virtualAddress);
-    if (frameIndex >= NUM_FRAMES)
-    {
-        return 0;
-    }
+    uint64_t frame = PageTableManager::traverseAndAllocate(virtualAddress);
+    if (frame >= NUM_FRAMES) return 0;
 
-    uint64_t offset = getOffset(virtualAddress);
-    uint64_t physicalAddress = frameIndex * PAGE_SIZE + offset;
+    uint64_t offset = getPageOffset(virtualAddress);
+    uint64_t physicalAddress = frame * PAGE_SIZE + offset;
 
     PMwrite(physicalAddress, value);
     return 1;
